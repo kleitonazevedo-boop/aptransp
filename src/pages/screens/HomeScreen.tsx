@@ -28,7 +28,7 @@ const HomeScreen = ({ onStart, onHistory, onAbout }: Props) => (
 
       <div className="mt-2 animate-fade-in-up">
         <h1 className="text-3xl font-bold text-foreground tracking-tight">
-          Leitor Bilhete NFC
+          Consulta de Saldo NFC
         </h1>
         <p className="text-muted-foreground mt-2 leading-relaxed">
           Consulte informações técnicas do seu cartão por aproximação NFC.
