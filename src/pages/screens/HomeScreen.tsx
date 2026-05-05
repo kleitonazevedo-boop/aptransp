@@ -31,7 +31,7 @@ const HomeScreen = ({ onStart, onHistory, onAbout }: Props) => (
           Consulta de Saldo NFC
         </h1>
         <p className="text-muted-foreground mt-2 leading-relaxed">
-          Consulte informações técnicas do seu cartão por aproximação NFC.
+          Consulte o saldo do bilhete único.
         </p>
       </div>
 
