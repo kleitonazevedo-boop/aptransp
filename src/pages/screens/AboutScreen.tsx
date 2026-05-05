@@ -20,7 +20,7 @@ const AboutScreen = ({ onBack }: Props) => (
     <div className="screen-padding flex flex-col gap-4">
       <Card className="p-6 rounded-3xl bg-gradient-card text-primary-foreground border-0 shadow-elevated">
         <ShieldCheck className="w-10 h-10 mb-3 opacity-90" />
-        <h2 className="text-xl font-bold">Leitor Bilhete NFC</h2>
+        <h2 className="text-xl font-bold">Consulta de Saldo NFC</h2>
         <p className="text-sm opacity-85 mt-1">
           Protótipo demonstrativo de leitura NFC para fins educacionais.
         </p>
