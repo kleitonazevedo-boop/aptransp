@@ -42,9 +42,18 @@
 
     --radius: 1rem;
 
+    /* Brand colors */
+    --brand-blue: 217 78% 45%;
+    --brand-blue-deep: 220 75% 35%;
+    --brand-purple: 265 55% 38%;
+    --brand-purple-deep: 268 60% 28%;
+    --brand-yellow: 45 95% 55%;
+
     --gradient-primary: linear-gradient(135deg, hsl(217 91% 50%), hsl(199 89% 48%));
     --gradient-soft: linear-gradient(180deg, hsl(210 40% 98%), hsl(214 32% 95%));
     --gradient-card: linear-gradient(135deg, hsl(217 91% 50%), hsl(222 80% 40%));
+    --gradient-brand-blue: linear-gradient(180deg, hsl(217 78% 48%), hsl(220 75% 38%));
+    --gradient-brand-purple: linear-gradient(180deg, hsl(265 55% 42%), hsl(268 60% 30%));
 
     --shadow-sm: 0 1px 3px hsl(217 30% 50% / 0.08);
     --shadow-md: 0 4px 16px hsl(217 30% 50% / 0.10);
@@ -54,12 +63,8 @@
 }
 
 @layer base {
-  * {
-    @apply border-border;
-  }
-  html, body, #root {
-    @apply min-h-screen;
-  }
+  * { @apply border-border; }
+  html, body, #root { @apply min-h-screen; }
   body {
     @apply bg-background text-foreground antialiased;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -68,54 +73,38 @@
 
 @layer components {
   .app-shell {
-    @apply mx-auto w-full max-w-md min-h-screen bg-background flex flex-col relative;
+    @apply mx-auto w-full max-w-md min-h-screen bg-background flex flex-col relative overflow-hidden;
   }
-  .screen-padding {
-    @apply px-5 py-6;
-  }
+  .screen-padding { @apply px-5 py-6; }
 }
 
 @layer utilities {
-  .bg-gradient-primary {
-    background: var(--gradient-primary);
-  }
-  .bg-gradient-card {
-    background: var(--gradient-card);
-  }
-  .bg-gradient-soft {
-    background: var(--gradient-soft);
-  }
-  .shadow-soft {
-    box-shadow: var(--shadow-md);
-  }
-  .shadow-elevated {
-    box-shadow: var(--shadow-lg);
-  }
-  .shadow-glow {
-    box-shadow: var(--shadow-glow);
-  }
+  .bg-gradient-primary { background: var(--gradient-primary); }
+  .bg-gradient-card { background: var(--gradient-card); }
+  .bg-gradient-soft { background: var(--gradient-soft); }
+  .bg-brand-blue { background: var(--gradient-brand-blue); }
+  .bg-brand-purple { background: var(--gradient-brand-purple); }
+  .text-brand-yellow { color: hsl(var(--brand-yellow)); }
+  .bg-brand-yellow { background-color: hsl(var(--brand-yellow)); }
+  .shadow-soft { box-shadow: var(--shadow-md); }
+  .shadow-elevated { box-shadow: var(--shadow-lg); }
+  .shadow-glow { box-shadow: var(--shadow-glow); }
 }
 
-/* NFC animation */
 @keyframes nfc-wave {
   0% { transform: scale(0.5); opacity: 0.8; }
   100% { transform: scale(2.2); opacity: 0; }
-}
-@keyframes card-tap {
-  0%, 100% { transform: translateY(-12px) rotate(-8deg); }
-  50% { transform: translateY(4px) rotate(-8deg); }
 }
 @keyframes fade-in-up {
   from { opacity: 0; transform: translateY(12px); }
   to { opacity: 1; transform: translateY(0); }
 }
-@keyframes pulse-dot {
-  0%, 100% { opacity: 0.3; }
-  50% { opacity: 1; }
+@keyframes pulse-soft {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
 }
 .animate-nfc-wave { animation: nfc-wave 2s ease-out infinite; }
 .animate-nfc-wave-2 { animation: nfc-wave 2s ease-out infinite 0.6s; }
 .animate-nfc-wave-3 { animation: nfc-wave 2s ease-out infinite 1.2s; }
-.animate-card-tap { animation: card-tap 1.6s ease-in-out infinite; }
 .animate-fade-in-up { animation: fade-in-up 0.4s ease-out both; }
-.animate-pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+.animate-pulse-soft { animation: pulse-soft 1.6s ease-in-out infinite; }

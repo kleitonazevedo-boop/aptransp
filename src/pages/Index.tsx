@@ -1,61 +1,45 @@
 import { useState } from "react";
-import HomeScreen from "./screens/HomeScreen";
-import ReadScreen from "./screens/ReadScreen";
-import ResultScreen from "./screens/ResultScreen";
-import ErrorScreen, { ErrorKind } from "./screens/ErrorScreen";
-import HistoryScreen from "./screens/HistoryScreen";
+import SplashScreen from "./screens/SplashScreen";
+import PrivacyConsentScreen from "./screens/PrivacyConsentScreen";
+import WalletScreen from "./screens/WalletScreen";
+import MapScreen from "./screens/MapScreen";
 import AboutScreen from "./screens/AboutScreen";
-import { NfcReading, saveReading } from "@/lib/nfc";
+import PrivacyPolicyScreen from "./screens/PrivacyPolicyScreen";
+import TermsScreen from "./screens/TermsScreen";
 
-export type Screen =
-  | { name: "home" }
-  | { name: "read" }
-  | { name: "result"; reading: NfcReading }
-  | { name: "error"; kind: ErrorKind }
-  | { name: "history" }
-  | { name: "about" };
+type Screen = "splash" | "consent" | "wallet" | "map" | "about" | "privacy" | "terms";
+const CONSENT_KEY = "aptransp_consent_v1";
 
 const Index = () => {
-  const [screen, setScreen] = useState<Screen>({ name: "home" });
+  const [screen, setScreen] = useState<Screen>("splash");
 
-  const go = (s: Screen) => setScreen(s);
+  const handleEnter = () => {
+    const accepted = localStorage.getItem(CONSENT_KEY) === "1";
+    setScreen(accepted ? "wallet" : "consent");
+  };
+
+  const handleAcceptConsent = () => {
+    localStorage.setItem(CONSENT_KEY, "1");
+    setScreen("wallet");
+  };
 
   return (
-    <div className="app-shell bg-gradient-soft">
-      {screen.name === "home" && (
-        <HomeScreen
-          onStart={() => go({ name: "read" })}
-          onHistory={() => go({ name: "history" })}
-          onAbout={() => go({ name: "about" })}
+    <div className="app-shell">
+      {screen === "splash" && <SplashScreen onEnter={handleEnter} />}
+      {screen === "consent" && <PrivacyConsentScreen onAccept={handleAcceptConsent} />}
+      {screen === "wallet" && (
+        <WalletScreen onAbout={() => setScreen("about")} onOpenMap={() => setScreen("map")} />
+      )}
+      {screen === "map" && <MapScreen onBack={() => setScreen("wallet")} />}
+      {screen === "about" && (
+        <AboutScreen
+          onBack={() => setScreen("wallet")}
+          onPrivacy={() => setScreen("privacy")}
+          onTerms={() => setScreen("terms")}
         />
       )}
-      {screen.name === "read" && (
-        <ReadScreen
-          onBack={() => go({ name: "home" })}
-          onSuccess={(r) => {
-            saveReading(r);
-            go({ name: "result", reading: r });
-          }}
-          onError={(kind) => go({ name: "error", kind })}
-        />
-      )}
-      {screen.name === "result" && (
-        <ResultScreen
-          reading={screen.reading}
-          onNew={() => go({ name: "read" })}
-          onHistory={() => go({ name: "history" })}
-          onBack={() => go({ name: "home" })}
-        />
-      )}
-      {screen.name === "error" && (
-        <ErrorScreen
-          kind={screen.kind}
-          onRetry={() => go({ name: "read" })}
-          onHome={() => go({ name: "home" })}
-        />
-      )}
-      {screen.name === "history" && <HistoryScreen onBack={() => go({ name: "home" })} />}
-      {screen.name === "about" && <AboutScreen onBack={() => go({ name: "home" })} />}
+      {screen === "privacy" && <PrivacyPolicyScreen onBack={() => setScreen("about")} />}
+      {screen === "terms" && <TermsScreen onBack={() => setScreen("about")} />}
     </div>
   );
 };
