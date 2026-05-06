@@ -2,7 +2,7 @@ import { useState } from "react";
 import { Logo } from "@/components/Logo";
 import { SideMenu } from "@/components/SideMenu";
 import { AlertTriangle, Map } from "lucide-react";
-import mapaImg from "/mapa-transporte.png";
+const mapaImg = "/mapa-transporte.png";
 
 interface Props {
   onAbout: () => void;
