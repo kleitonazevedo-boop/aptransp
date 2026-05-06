@@ -1,5 +1,6 @@
 import { Button } from "@/components/ui/button";
 import { Logo } from "@/components/Logo";
+import { InstallButton } from "@/components/InstallButton";
 
 const SplashScreen = ({ onEnter }: { onEnter: () => void }) => (
   <div className="flex-1 bg-brand-blue flex flex-col items-center justify-center px-8 text-white">
@@ -14,6 +15,7 @@ const SplashScreen = ({ onEnter }: { onEnter: () => void }) => (
     >
       Entrar
     </Button>
+    <InstallButton />
   </div>
 );
 
