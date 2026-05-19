@@ -67,25 +67,19 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
     setDevice(detectDevice());
   }, []);
 
-  const handleRead = async () => {
+  const [nfcResult, setNfcResult] = useState<NfcDump | null>(null);
+
+  function handleStartScan() {
     setReading(true);
     setError(null);
     setDump(null);
-    try {
-      const nativeResult = await tryNativeNfcRead();
-      if (nativeResult) {
-        setDump(nativeResult);
-      } else {
-        // Fallback: simulação para desenvolvimento da UI antes da integração nativa
-        await new Promise((r) => setTimeout(r, 1800));
-        setDump(simulateDump());
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha na leitura NFC");
-    } finally {
+    startNFCScan((data) => {
+      console.log("NFC DATA:", data);
+      setNfcResult(data);
+      setDump(data);
       setReading(false);
-    }
-  };
+    });
+  }
 
   return (
     <div className="flex-1 flex flex-col bg-slate-50">
