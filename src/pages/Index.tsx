@@ -3,11 +3,22 @@ import SplashScreen from "./screens/SplashScreen";
 import PrivacyConsentScreen from "./screens/PrivacyConsentScreen";
 import WalletScreen from "./screens/WalletScreen";
 import MapScreen from "./screens/MapScreen";
+import RouteScreen from "./screens/RouteScreen";
+import NfcDiagnosticScreen from "./screens/NfcDiagnosticScreen";
 import AboutScreen from "./screens/AboutScreen";
 import PrivacyPolicyScreen from "./screens/PrivacyPolicyScreen";
 import TermsScreen from "./screens/TermsScreen";
 
-type Screen = "splash" | "consent" | "wallet" | "map" | "about" | "privacy" | "terms";
+type Screen =
+  | "splash"
+  | "consent"
+  | "wallet"
+  | "map"
+  | "route"
+  | "nfc-diagnostic"
+  | "about"
+  | "privacy"
+  | "terms";
 const CONSENT_KEY = "aptransp_consent_v1";
 
 const Index = () => {
@@ -28,9 +39,18 @@ const Index = () => {
       {screen === "splash" && <SplashScreen onEnter={handleEnter} />}
       {screen === "consent" && <PrivacyConsentScreen onAccept={handleAcceptConsent} />}
       {screen === "wallet" && (
-        <WalletScreen onAbout={() => setScreen("about")} onOpenMap={() => setScreen("map")} />
+        <WalletScreen
+          onAbout={() => setScreen("about")}
+          onOpenMap={() => setScreen("map")}
+          onOpenRoute={() => setScreen("route")}
+          onOpenNfcDiagnostic={() => setScreen("nfc-diagnostic")}
+        />
       )}
       {screen === "map" && <MapScreen onBack={() => setScreen("wallet")} />}
+      {screen === "route" && <RouteScreen onBack={() => setScreen("wallet")} />}
+      {screen === "nfc-diagnostic" && (
+        <NfcDiagnosticScreen onBack={() => setScreen("wallet")} />
+      )}
       {screen === "about" && (
         <AboutScreen
           onBack={() => setScreen("wallet")}
