@@ -1,7 +1,7 @@
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { Logo } from "@/components/Logo";
 import { ArrowLeft, AlertTriangle } from "lucide-react";
-const mapaImg = "/mapa-transporte.png";
+const mapaImg = "/mapa-transporte.jpg";
 
 const MapScreen = ({ onBack }: { onBack: () => void }) => (
   <div className="flex-1 flex flex-col bg-white">
