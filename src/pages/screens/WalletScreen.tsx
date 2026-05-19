@@ -1,15 +1,17 @@
 import { useState } from "react";
 import { Logo } from "@/components/Logo";
 import { SideMenu } from "@/components/SideMenu";
-import { AlertTriangle, Map } from "lucide-react";
+import { AlertTriangle, Map, Route, Construction } from "lucide-react";
 const mapaImg = "/mapa-transporte.png";
 
 interface Props {
   onAbout: () => void;
   onOpenMap: () => void;
+  onOpenRoute: () => void;
+  onOpenNfcDiagnostic: () => void;
 }
 
-const WalletScreen = ({ onAbout, onOpenMap }: Props) => {
+const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: Props) => {
   const [balance, setBalance] = useState<number | null>(null);
   const [reading, setReading] = useState(false);
 
@@ -27,7 +29,13 @@ const WalletScreen = ({ onAbout, onOpenMap }: Props) => {
     <div className="flex-1 flex flex-col bg-slate-100">
       {/* Top purple header */}
       <header className="bg-brand-purple text-white px-4 pt-4 pb-8 flex items-center justify-between rounded-b-3xl">
-        <SideMenu onBalance={() => setBalance(null)} onMap={onOpenMap} onAbout={onAbout} />
+        <SideMenu
+          onBalance={() => setBalance(null)}
+          onMap={onOpenMap}
+          onRoute={onOpenRoute}
+          onAbout={onAbout}
+          onNfcDiagnostic={onOpenNfcDiagnostic}
+        />
         <div className="flex items-center gap-2">
           <Logo className="w-8 h-8" />
         </div>
@@ -35,7 +43,7 @@ const WalletScreen = ({ onAbout, onOpenMap }: Props) => {
       </header>
 
       {/* Wallet stack */}
-      <div className="px-4 -mt-4 flex-1 flex flex-col gap-3">
+      <div className="px-4 -mt-4 flex-1 flex flex-col gap-3 pb-4">
         {/* Blue card - balance */}
         <button
           onClick={handleTap}
@@ -55,7 +63,11 @@ const WalletScreen = ({ onAbout, onOpenMap }: Props) => {
                 <span className="absolute w-24 h-24 rounded-full border-2 border-white/60 animate-nfc-wave-3" />
               </>
             )}
-            <div className={`w-20 h-20 rounded-full bg-white/15 flex items-center justify-center ${reading ? "animate-pulse-soft" : ""}`}>
+            <div
+              className={`w-20 h-20 rounded-full bg-white/15 flex items-center justify-center ${
+                reading ? "animate-pulse-soft" : ""
+              }`}
+            >
               <div className="w-12 h-12 rounded-full bg-brand-yellow shadow-glow" />
             </div>
           </div>
@@ -73,13 +85,31 @@ const WalletScreen = ({ onAbout, onOpenMap }: Props) => {
         {/* Map card */}
         <button
           onClick={onOpenMap}
-          className="rounded-3xl overflow-hidden shadow-elevated bg-white text-left mb-4"
+          className="rounded-3xl overflow-hidden shadow-elevated bg-white text-left"
         >
           <div className="bg-sky-300 text-blue-900 font-bold text-center py-3 flex items-center justify-center gap-2">
             <Map className="w-5 h-5" /> Mapa do Transporte
           </div>
           <div className="bg-white p-2">
-            <img src={mapaImg} alt="Mapa do transporte metropolitano" className="w-full h-24 object-cover object-top rounded-lg" />
+            <img
+              src={mapaImg}
+              alt="Mapa do transporte metropolitano"
+              className="w-full h-24 object-cover object-top rounded-lg"
+            />
+          </div>
+        </button>
+
+        {/* Route card - em construção */}
+        <button
+          onClick={onOpenRoute}
+          className="rounded-3xl overflow-hidden shadow-elevated bg-white text-left"
+        >
+          <div className="bg-brand-yellow text-blue-900 font-bold text-center py-3 flex items-center justify-center gap-2">
+            <Route className="w-5 h-5" /> Traçado de Rota
+          </div>
+          <div className="bg-white p-4 flex items-center justify-center gap-2 text-muted-foreground">
+            <Construction className="w-5 h-5" />
+            <span className="text-sm font-medium">em construção</span>
           </div>
         </button>
       </div>
