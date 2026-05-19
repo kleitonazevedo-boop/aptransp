@@ -130,7 +130,7 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
             <h2 className="font-semibold text-sm">2. Leitura NFC técnica</h2>
           </div>
 
-          <Button onClick={handleRead} disabled={reading} className="w-full" size="lg">
+          <Button onClick={handleStartScan} disabled={reading} className="w-full" size="lg">
             {reading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" /> Aguardando cartão…
