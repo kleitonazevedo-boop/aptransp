@@ -17,40 +17,7 @@ interface DeviceStatus {
   isNative: boolean;
 }
 
-interface NfcDump {
-  uid: string;
-  technologies: string[];
-  cardType: string;
-  atqa?: string;
-  sak?: string;
-  historicalBytes?: string;
-  maxTransceiveLength?: number;
-  timestamp: number;
-}
-
-// Future native integration entrypoint. When Capacitor + a native NFC plugin
-// is wired up (e.g. `capacitor-nfc` or a custom Android plugin), this function
-// will delegate to it. Today it returns null so we can fall back to a simulated
-// technical dump for UI development.
-const tryNativeNfcRead = async (): Promise<NfcDump | null> => {
-  try {
-    // Lazy access to a future global plugin without importing it.
-    // Expected shape: window.Capacitor.Plugins.NfcReader.read()
-    const w = window as unknown as {
-      Capacitor?: {
-        isNativePlatform?: () => boolean;
-        Plugins?: { NfcReader?: { read: () => Promise<NfcDump> } };
-      };
-    };
-    const plugin = w.Capacitor?.Plugins?.NfcReader;
-    if (plugin && typeof plugin.read === "function") {
-      return await plugin.read();
-    }
-    return null;
-  } catch {
-    return null;
-  }
-};
+type NfcDump = NfcData;
 
 const detectDevice = (): DeviceStatus => {
   const ua = navigator.userAgent;
