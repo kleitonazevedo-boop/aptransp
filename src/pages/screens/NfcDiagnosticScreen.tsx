@@ -3,6 +3,7 @@ import { ArrowLeft, Smartphone, Wifi, WifiOff, AlertTriangle, Loader2, CheckCirc
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { startNFCScan, type NfcData } from "@/services/nfcService";
 
 interface Props {
   onBack: () => void;
@@ -16,40 +17,7 @@ interface DeviceStatus {
   isNative: boolean;
 }
 
-interface NfcDump {
-  uid: string;
-  technologies: string[];
-  cardType: string;
-  atqa?: string;
-  sak?: string;
-  historicalBytes?: string;
-  maxTransceiveLength?: number;
-  timestamp: number;
-}
-
-// Future native integration entrypoint. When Capacitor + a native NFC plugin
-// is wired up (e.g. `capacitor-nfc` or a custom Android plugin), this function
-// will delegate to it. Today it returns null so we can fall back to a simulated
-// technical dump for UI development.
-const tryNativeNfcRead = async (): Promise<NfcDump | null> => {
-  try {
-    // Lazy access to a future global plugin without importing it.
-    // Expected shape: window.Capacitor.Plugins.NfcReader.read()
-    const w = window as unknown as {
-      Capacitor?: {
-        isNativePlatform?: () => boolean;
-        Plugins?: { NfcReader?: { read: () => Promise<NfcDump> } };
-      };
-    };
-    const plugin = w.Capacitor?.Plugins?.NfcReader;
-    if (plugin && typeof plugin.read === "function") {
-      return await plugin.read();
-    }
-    return null;
-  } catch {
-    return null;
-  }
-};
+type NfcDump = NfcData;
 
 const detectDevice = (): DeviceStatus => {
   const ua = navigator.userAgent;
@@ -99,25 +67,19 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
     setDevice(detectDevice());
   }, []);
 
-  const handleRead = async () => {
+  const [nfcResult, setNfcResult] = useState<NfcDump | null>(null);
+
+  function handleStartScan() {
     setReading(true);
     setError(null);
     setDump(null);
-    try {
-      const nativeResult = await tryNativeNfcRead();
-      if (nativeResult) {
-        setDump(nativeResult);
-      } else {
-        // Fallback: simulação para desenvolvimento da UI antes da integração nativa
-        await new Promise((r) => setTimeout(r, 1800));
-        setDump(simulateDump());
-      }
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha na leitura NFC");
-    } finally {
+    startNFCScan((data) => {
+      console.log("NFC DATA:", data);
+      setNfcResult(data);
+      setDump(data);
       setReading(false);
-    }
-  };
+    });
+  }
 
   return (
     <div className="flex-1 flex flex-col bg-slate-50">
@@ -168,7 +130,7 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
             <h2 className="font-semibold text-sm">2. Leitura NFC técnica</h2>
           </div>
 
-          <Button onClick={handleRead} disabled={reading} className="w-full" size="lg">
+          <Button onClick={handleStartScan} disabled={reading} className="w-full" size="lg">
             {reading ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" /> Aguardando cartão…
