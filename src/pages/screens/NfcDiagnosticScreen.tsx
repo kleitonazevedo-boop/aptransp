@@ -3,6 +3,7 @@ import { ArrowLeft, Smartphone, Wifi, WifiOff, AlertTriangle, Loader2, CheckCirc
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
+import { startNFCScan, type NfcData } from "@/services/nfcService";
 
 interface Props {
   onBack: () => void;
