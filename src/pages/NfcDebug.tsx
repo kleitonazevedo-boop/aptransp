@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { Helmet } from "react-helmet-async";
 import {
   Lock,
   Unlock,
@@ -440,7 +441,13 @@ const NfcDebug = () => {
         : "border-red-500 text-red-300";
 
   return (
-    <main className="min-h-screen bg-slate-950 p-4 text-slate-100">
+    <>
+      <Helmet>
+        <title>NFC Debug — Forensic Lab | aptransp</title>
+        <meta name="description" content="Ferramenta forense NFC para análise técnica de cartões MIFARE. Dump de blocos, snapshots, diff e exportação de dados em tempo real." />
+        <link rel="canonical" href="https://bilhete-tap-reader.lovable.app/nfc-debug" />
+      </Helmet>
+      <main className="min-h-screen bg-slate-950 p-4 text-slate-100">
       <div className="mx-auto max-w-3xl space-y-4">
         <header className="rounded-lg border border-emerald-500 bg-slate-900 p-4">
           <h1 className="font-mono text-xl font-bold text-emerald-300">NFC Debug // Forensic</h1>
@@ -1007,6 +1014,7 @@ const NfcDebug = () => {
         </section>
       </div>
     </main>
+    </>
   );
 };
 
