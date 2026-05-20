@@ -21,16 +21,14 @@ const detectDevice = (): DeviceStatus => {
   const ua = navigator.userAgent;
   const w = window as unknown as {
     Capacitor?: { isNativePlatform?: () => boolean; getPlatform?: () => string };
-    NDEFReader?: unknown;
   };
   const isNative = !!w.Capacitor?.isNativePlatform?.();
   const platform = w.Capacitor?.getPlatform?.() ?? (isNative ? "native" : "web");
-  const webNfc = typeof w.NDEFReader !== "undefined";
   const looksAndroid = /Android/i.test(ua);
   const model = (ua.match(/\(([^)]+)\)/)?.[1] ?? "Desconhecido").slice(0, 60);
 
   return {
-    hasNfc: isNative ? null : webNfc || looksAndroid ? true : false,
+    hasNfc: isNative ? null : looksAndroid ? null : false,
     nfcEnabled: null,
     model,
     platform,
