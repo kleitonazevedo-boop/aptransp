@@ -188,6 +188,76 @@ const NfcDebug = () => {
   const deniedCount = totalSectors - grantedCount;
   const accessPercent = totalSectors > 0 ? Math.round((grantedCount / totalSectors) * 100) : 0;
 
+  const handleExport = async () => {
+    const rawText = formatRaw(raw);
+    const parsedText = parsed ? JSON.stringify(parsed, null, 2) : "Aguardando objeto";
+
+    const content = [
+      "=============================================",
+      "          NFC DEBUG EXPORT — TXT",
+      "=============================================",
+      "",
+      `Gerado em: ${new Date().toLocaleString("pt-BR")}`,
+      `UID: ${uid || "-"}`,
+      `Tech: ${tech.length > 0 ? tech.join(", ") : "-"}`,
+      `Timestamp: ${timestamp ? `${timestamp} (${new Date(timestamp).toISOString()})` : "-"}`,
+      "",
+      "---------------------------------------------",
+      "RAW EVENT",
+      "---------------------------------------------",
+      rawText,
+      "",
+      "---------------------------------------------",
+      "PARSED JSON",
+      "---------------------------------------------",
+      parsedText,
+      "",
+      "=============================================",
+      "                 FIM DO ARQUIVO",
+      "=============================================",
+    ].join("\n");
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+
+    try {
+      const picker = (window as unknown as Record<string, unknown>)
+        .showSaveFilePicker as
+        | ((opts: {
+            suggestedName?: string;
+            types?: Array<{ description: string; accept: Record<string, string[]> }>;
+          }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }>)
+        | undefined;
+
+      if (picker) {
+        const handle = await picker({
+          suggestedName: `nfc-debug-${Date.now()}.txt`,
+          types: [
+            {
+              description: "Arquivo de texto",
+              accept: { "text/plain": [".txt"] },
+            },
+          ],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `nfc-debug-${Date.now()}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        console.error("Erro ao exportar:", err);
+      }
+    }
+  };
+
   const statusLabel =
     status === "waiting" ? "AGUARDANDO" : status === "received" ? "EVENTO RECEBIDO" : "ERRO";
   const statusColor =
