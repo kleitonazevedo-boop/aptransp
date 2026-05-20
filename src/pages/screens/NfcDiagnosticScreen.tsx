@@ -39,7 +39,9 @@ const detectDevice = (): DeviceStatus => {
 
 const NfcDiagnosticScreen = ({ onBack }: Props) => {
   const [device, setDevice] = useState<DeviceStatus | null>(null);
-  const [status, setStatus] = useState<NfcStatus>("idle");
+  // A tela vive em modo de escuta contínua — começa em "scanning"
+  // (aguardando aproximação) e troca para "detected" ao receber o evento.
+  const [status, setStatus] = useState<NfcStatus>("scanning");
   const [result, setResult] = useState<NfcData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -47,22 +49,19 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
     setDevice(detectDevice());
   }, []);
 
-  // Listener global de eventos NFC vindos do bridge nativo (Capacitor)
+  // Listener global de eventos NFC vindos do bridge nativo (Capacitor).
+  // Atualização AO VIVO — sem botão, sem refresh.
   useEffect(() => {
     const unsubscribe = onNfcResult((data) => {
       console.log("NFC DATA:", data);
       setResult(data);
-      setStatus("success");
+      setStatus("detected");
       setError(null);
     });
     return unsubscribe;
   }, []);
 
-  const handleStartScan = () => {
-    setError(null);
-    setResult(null);
-    setStatus("scanning");
-  };
+
 
   return (
     <div className="flex-1 flex flex-col bg-slate-50">
