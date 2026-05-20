@@ -177,7 +177,7 @@ const StatusBadge = ({ status }: { status: NfcStatus }) => {
   const map: Record<NfcStatus, { label: string; cls: string }> = {
     idle: { label: "idle", cls: "bg-slate-200 text-slate-700" },
     scanning: { label: "scanning", cls: "bg-brand-yellow/30 text-yellow-800" },
-    success: { label: "success", cls: "bg-success/20 text-success" },
+    detected: { label: "detected", cls: "bg-success/20 text-success" },
     error: { label: "error", cls: "bg-destructive/15 text-destructive" },
   };
   const s = map[status];
