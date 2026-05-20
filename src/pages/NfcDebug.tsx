@@ -361,6 +361,60 @@ const NfcDebug = () => {
   const deniedCount = totalSectors - grantedCount;
   const accessPercent = totalSectors > 0 ? Math.round((grantedCount / totalSectors) * 100) : 0;
 
+  function buildForensicDumpPayload(snapshot?: Snapshot) {
+    const source = snapshot?.data ?? parsed;
+    const sourceAuth = source?.authResults ?? authResults ?? [];
+    const hexDump = sourceAuth.flatMap((r) =>
+      (r.blocks ?? []).map((b) => ({
+        sector: r.sector,
+        block: b.block,
+        hex: b.hex,
+        isTrailer: isTrailerBlock(b.block, r.sector, b.isTrailer),
+        type: isTrailerBlock(b.block, r.sector, b.isTrailer) ? "trailer" : "data",
+      })),
+    );
+    const validSectors = sourceAuth.filter((r) => r.authenticated).map((r) => r.sector);
+
+    return {
+      uid: snapshot?.uid ?? uid,
+      timestamp: snapshot?.timestamp ?? timestamp ?? Date.now(),
+      authState: {
+        totalSectors: sourceAuth.length,
+        authenticatedSectors: validSectors.length,
+        deniedSectors: sourceAuth.filter((r) => !r.authenticated).map((r) => r.sector),
+        accessPercent: sourceAuth.length > 0 ? Math.round((validSectors.length / sourceAuth.length) * 100) : 0,
+      },
+      validSectors,
+      blocksRead: hexDump.length,
+      blocks: hexDump,
+      diffData: {
+        snapshotA: snapA ? { id: snapA.id, timestamp: snapA.timestamp, uid: snapA.uid } : null,
+        snapshotB: snapB ? { id: snapB.id, timestamp: snapB.timestamp, uid: snapB.uid } : null,
+        changedBlocks: diffEntries.filter((d) => d.changed),
+        unchangedBlocks: diffEntries.filter((d) => !d.changed),
+      },
+      forensicMetadata: {
+        generatedAt: new Date().toISOString(),
+        source: "nfc-debug",
+        exportFormat: "forensic-snapshot-v1",
+        platform: isNativePlatform() ? "capacitor" : "web",
+      },
+      mifareInfo: {
+        mifareType: source?.mifareType ?? mifareType,
+        mifareTypeLabel: mifareTypeLabel(source?.mifareType ?? mifareType),
+        mifareSize: source?.mifareSize ?? mifareSize,
+        mifareSizeLabel: mifareSizeLabel(source?.mifareSize ?? mifareSize),
+        sectorCount: source?.sectorCount ?? sectorCount,
+        blockCount: source?.blockCount ?? blockCount,
+        tech: source?.tech ?? tech,
+      },
+      readOnly: true,
+      authResults: sourceAuth,
+      rawEvent: raw,
+      snapshotData: source,
+    };
+  }
+
   const handleExportTxt = async () => {
     const rawText = formatRaw(raw);
     const parsedText = parsed ? JSON.stringify(parsed, null, 2) : "Aguardando objeto";
