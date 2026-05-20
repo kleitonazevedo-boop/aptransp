@@ -72,22 +72,32 @@ const bytesToAscii = (bytes: number[]): string =>
     .join("");
 
 export const parseDump = (payload: NfcPayload | null | undefined): ParsedBlock[] => {
-  if (!payload?.authResults) return [];
+  if (!payload) return [];
   const out: ParsedBlock[] = [];
-  payload.authResults.forEach((r) => {
-    (r.blocks ?? []).forEach((b) => {
-      const bytes = hexToBytes(b.hex);
-      out.push({
-        sector: r.sector,
-        block: b.block,
-        hex: b.hex,
-        bytes,
-        isTrailer: isTrailerBlock(b.block, r.sector, b.isTrailer),
-        ascii: bytesToAscii(bytes),
-        isEmpty: bytes.length > 0 && bytes.every((x) => x === 0),
-      });
+
+  const pushBlock = (sector: number, b: MifareBlock) => {
+    const bytes = hexToBytes(b.hex);
+    out.push({
+      sector,
+      block: b.block,
+      hex: b.hex,
+      bytes,
+      isTrailer: isTrailerBlock(b.block, sector, b.isTrailer),
+      ascii: bytesToAscii(bytes),
+      isEmpty: bytes.length > 0 && bytes.every((x) => x === 0),
     });
-  });
+  };
+
+  if (payload.authResults?.length) {
+    payload.authResults.forEach((r) => (r.blocks ?? []).forEach((b) => pushBlock(r.sector, b)));
+  }
+  // Fallback / additional: top-level flat blocks array
+  if (Array.isArray(payload.blocks) && payload.blocks.length) {
+    payload.blocks.forEach((b) => {
+      if (out.some((p) => p.block === b.block)) return;
+      pushBlock(sectorOfBlock(b.block), b);
+    });
+  }
   return out.sort((a, b) => a.block - b.block);
 };
 
