@@ -14,6 +14,7 @@ import {
   FileJson,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import ForensicReport from "@/components/ForensicReport";
 
 type MifareBlock = {
   block: number;
