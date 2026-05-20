@@ -24,7 +24,13 @@ export type NfcPayload = {
   sectorCount?: number;
   blockCount?: number;
   authResults?: AuthResult[];
+  // Android may also send a flat top-level `blocks` array (read-only HEX dump)
+  // without auth grouping. We synthesize sectors from block numbers in that case.
+  blocks?: MifareBlock[];
 };
+
+export const sectorOfBlock = (block: number): number =>
+  block < 128 ? Math.floor(block / 4) : 32 + Math.floor((block - 128) / 16);
 
 export type Snapshot = {
   id: string;
