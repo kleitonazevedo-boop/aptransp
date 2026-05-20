@@ -1,10 +1,23 @@
 import { useEffect, useState } from "react";
-import { Lock, Unlock } from "lucide-react";
+import { Lock, Unlock, Database, Key } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
+type MifareBlock = {
+  block: number;
+  hex: string;
+};
 
 type AuthResult = {
   sector: number;
   authenticated: boolean;
+  blocks?: MifareBlock[];
+};
+
+const isTrailerBlock = (block: number, sector: number) => {
+  // Sectors 0-31: 4 blocks each, trailer is last (block % 4 === 3)
+  // Sectors 32-39: 16 blocks each, trailer is last (block % 16 === 15)
+  if (sector < 32) return block % 4 === 3;
+  return block % 16 === 15;
 };
 
 type NfcPayload = {
