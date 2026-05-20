@@ -18,59 +18,7 @@ interface CapacitorLike {
     App?: {
       addListener: (
         eventName: string,
-<<<<<<< Updated upstream
         cb: (data: unknown) => void,
-      ) => Promise<{ remove: () => Promise<void> }> | { remove: () => void };
-    };
-  };
-}
-
-/**
- * Faz o parse defensivo do payload NFC vindo do Android.
- * O Android envia via triggerJSEvent como STRING JSON, ex:
- *   "{\"uid\":\"04:A1:B2:C3\",\"tech\":[\"NfcA\",\"MifareClassic\"]}"
- * Também aceita objeto já parseado (fallback web).
- */
-function parseNfcPayload(raw: unknown): NfcData | null {
-  try {
-    let data: unknown = raw;
-
-    // event.detail pode chegar como string JSON do bridge
-    if (typeof data === "string") {
-      data = JSON.parse(data);
-    }
-
-    if (!data || typeof data !== "object") return null;
-    const obj = data as Record<string, unknown>;
-
-    // Alguns bridges entregam { detail: "..." } aninhado
-    if (typeof obj.detail === "string") {
-      return parseNfcPayload(obj.detail);
-    }
-
-    const uid = typeof obj.uid === "string" ? obj.uid : null;
-    const tech = Array.isArray(obj.tech) ? (obj.tech as unknown[]).map(String) : [];
-    if (!uid) return null;
-
-    return {
-      uid,
-      tech,
-      timestamp: typeof obj.timestamp === "number" ? obj.timestamp : Date.now(),
-    };
-  } catch (err) {
-    console.error("Falha ao parsear payload NFC:", err, raw);
-    return null;
-  }
-}
-
-/**
- * Assina o evento global "nfcResult" emitido pelo módulo nativo Android via
- * Capacitor. Retorna uma função para cancelar a assinatura.
- *
- * O Android envia os dados como STRING JSON (triggerJSEvent), então sempre
- * passamos por JSON.parse via parseNfcPayload.
-=======
-        cb: (data: NfcData) => void,
       ) =>
         | { remove: () => void }
         | { remove: () => Promise<void> }
@@ -80,68 +28,97 @@ function parseNfcPayload(raw: unknown): NfcData | null {
 }
 
 /**
- * Subscribe to NFC results coming from Android native layer.
- * Works both on real device (Capacitor) and web fallback (for testing).
->>>>>>> Stashed changes
+ * Faz parse seguro do payload vindo do Android.
  */
-export function onNfcResult(callback: NfcCallback): UnsubscribeFn {
-  const w = window as unknown as { Capacitor?: CapacitorLike };
-  const cap = w.Capacitor;
+function parseNfcPayload(raw: unknown): NfcData | null {
+  try {
+    let data: unknown = raw;
 
-<<<<<<< Updated upstream
-  // 1) Bridge nativo (Capacitor Plugins.App.addListener)
-=======
-  // =========================
-  // 1. NATIVE (CAPACITOR)
-  // =========================
->>>>>>> Stashed changes
-  const appPlugin = cap?.Plugins?.App;
-
-  if (cap?.isNativePlatform?.() && appPlugin?.addListener) {
-<<<<<<< Updated upstream
-    const handlePromise = appPlugin.addListener("nfcResult", (data) => {
-      const parsed = parseNfcPayload(data);
-      if (parsed) callback(parsed);
-=======
-    const handle = appPlugin.addListener("nfcResult", (data: NfcData) => {
-      callback({
-        ...data,
-        timestamp: data.timestamp ?? Date.now(),
-      });
->>>>>>> Stashed changes
-    });
-
-    return () => {
-      Promise.resolve(handle)
-        .then((h) => h?.remove?.())
-        .catch(() => {});
-    };
-  }
-
-<<<<<<< Updated upstream
-  // 2) Fallback / triggerJSEvent — window CustomEvent("nfcResult", { detail: "<json>" })
-  const handler = (e: Event) => {
-    const parsed = parseNfcPayload((e as CustomEvent).detail);
-    if (parsed) callback(parsed);
-=======
-  // =========================
-  // 2. WEB FALLBACK (DEV)
-  // =========================
-  const handler = (e: Event) => {
-    const detail = (e as CustomEvent<NfcData>).detail;
-
-    if (detail?.uid) {
-      callback({
-        ...detail,
-        timestamp: detail.timestamp ?? Date.now(),
-      });
+    // Android envia STRING JSON
+    if (typeof data === "string") {
+      data = JSON.parse(data);
     }
->>>>>>> Stashed changes
+
+    if (!data || typeof data !== "object") {
+      return null;
+    }
+
+    const obj = data as Record<string, unknown>;
+
+    // Alguns bridges podem aninhar em detail
+    if (typeof obj.detail === "string") {
+      return parseNfcPayload(obj.detail);
+    }
+
+    const uid =
+      typeof obj.uid === "string"
+        ? obj.uid
+        : null;
+
+    const tech = Array.isArray(obj.tech)
+      ? obj.tech.map(String)
+      : [];
+
+    if (!uid) {
+      return null;
+    }
+
+    return {
+      uid,
+      tech,
+      timestamp:
+        typeof obj.timestamp === "number"
+          ? obj.timestamp
+          : Date.now(),
+    };
+
+  } catch (err) {
+    console.error("Falha ao parsear payload NFC:", err, raw);
+    return null;
+  }
+}
+
+/**
+ * Escuta eventos NFC vindos do Android.
+ */
+export function onNfcResult(
+  callback: NfcCallback
+): UnsubscribeFn {
+
+  // =========================
+  // WEB / CUSTOM EVENT
+  // =========================
+
+  const handler = (e: Event) => {
+
+    console.log("NFC EVENT RECEBIDO:", e);
+
+    const parsed = parseNfcPayload(
+      (e as CustomEvent).detail
+    );
+
+    if (parsed) {
+
+      console.log("NFC PARSED:", parsed);
+
+      callback(parsed);
+
+    } else {
+
+      console.error("Falha parse NFC");
+
+    }
   };
 
-  window.addEventListener("nfcResult", handler);
+  window.addEventListener(
+    "nfcResult",
+    handler
+  );
 
   return () => {
-    window.removeEventListener("nfcResult", handler);
+    window.removeEventListener(
+      "nfcResult",
+      handler
+    );
   };
 }

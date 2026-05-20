@@ -67,6 +67,7 @@ class NfcHandler(
             // 🔥 DEBUG NFC
             Log.d("NFC_DEBUG", "TAG DETECTADA")
             Log.d("NFC_DEBUG", "UID GERADO: $uid")
+            Log.d("NFC_DEBUG", "UID: $uid")
 
             // 📦 JSON para envio seguro ao WebView
             val json = JSONObject().apply {
@@ -75,12 +76,15 @@ class NfcHandler(
             }
 
             Log.d("NFC_DEBUG", "🔥 VOU ENVIAR PARA WEBVIEW")
+            Log.d("NFC_DEBUG", "Enviando para React: ${json.toString()}")
 
-            // ✅ COMPATÍVEL COM SEU CAPACITOR (String esperado)
-            bridge.triggerJSEvent(
-                "nfcResult",
-                json.toString()
-            )
+            bridge.webView.post {
+                Log.d("NFC_DEBUG", "UI THREAD OK")
+                bridge.triggerJSEvent(
+                    "nfcResult",
+                    json.toString()
+                )
+            }
 
             Log.d("NFC_DEBUG", "🔥 ENVIO CONCLUÍDO")
         }
