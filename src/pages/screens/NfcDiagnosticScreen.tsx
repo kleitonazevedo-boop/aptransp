@@ -2,7 +2,7 @@ import { useEffect, useState } from "react";
 import { ArrowLeft, Smartphone, AlertTriangle, Loader2, CheckCircle2, XCircle, Radio } from "lucide-react";
 
 import { Logo } from "@/components/Logo";
-import { Button } from "@/components/ui/button";
+
 import { Card } from "@/components/ui/card";
 import { onNfcResult, type NfcData, type NfcStatus } from "@/services/nfcService";
 
