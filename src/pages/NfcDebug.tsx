@@ -1081,6 +1081,13 @@ const NfcDebug = () => {
           )}
         </section>
 
+        {/* FORENSIC ANALYZER MODULE */}
+        <ForensicReport
+          parsed={parsed}
+          snapshots={snapshots}
+          diff={snapA && snapB ? diffEntries : null}
+        />
+
         <section className="rounded-lg border border-slate-700 bg-slate-900 p-4">
           <h2 className="font-mono text-sm font-bold text-emerald-300">UID</h2>
           <pre className="mt-3 whitespace-pre-wrap break-words font-mono text-sm text-yellow-300">
