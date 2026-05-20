@@ -303,7 +303,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
         <AlertTriangle className="w-5 h-5 text-brand-yellow" />
       </header>
 
-      <div className="flex-1 relative px-3 pb-3">
+      <div className="flex-1 relative px-0 pb-0 -mt-4">
         {order.map((id, index) => {
           const isActive = id === active;
           const meta = cardMeta[id];
