@@ -68,6 +68,7 @@ const Index = () => {
       {screen === "privacy" && <PrivacyPolicyScreen onBack={() => setScreen("about")} />}
       {screen === "terms" && <TermsScreen onBack={() => setScreen("about")} />}
     </div>
+    </>
   );
 };
 
