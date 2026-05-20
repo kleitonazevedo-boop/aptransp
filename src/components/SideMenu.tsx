@@ -85,6 +85,15 @@ export const SideMenu = ({ onBalance, onMap, onRoute, onAbout, onNfcDiagnostic }
                 }}
                 small
               />
+              <MenuItem
+                icon={<Terminal className="w-4 h-4" />}
+                label="NFC Debug"
+                onClick={() => {
+                  navigate("/nfc-debug");
+                  close();
+                }}
+                small
+              />
             </div>
           )}
         </nav>
