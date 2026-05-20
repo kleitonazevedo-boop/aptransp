@@ -303,7 +303,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
         <AlertTriangle className="w-5 h-5 text-brand-yellow" />
       </header>
 
-      <div className="flex-1 relative px-3 pb-3">
+      <div className="flex-1 relative px-0 pb-0 -mt-4">
         {order.map((id, index) => {
           const isActive = id === active;
           const meta = cardMeta[id];
@@ -328,7 +328,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
             }
           } else if (isActive) {
             top = 0;
-            height = "calc(100% - 16px)";
+            height = "100%";
             zIndex = 50;
           } else if (positionFromActive > 0) {
             top = `calc(100% - ${(order.length - index) * COLLAPSED_PEEK}px)`;
@@ -343,12 +343,13 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
               key={id}
               onClick={() => setActive(isActive ? null : id)}
               initial={false}
-              animate={{ top, height, scale: isActive || isInitial ? 1 : 0.98 }}
+              animate={{ top, height, scale: 1 }}
               transition={spring}
               style={{ zIndex }}
-              className="absolute left-3 right-3 rounded-[2rem] overflow-hidden shadow-elevated cursor-pointer"
-              whileTap={{ scale: 0.98 }}
+              className="absolute left-0 right-0 rounded-t-3xl overflow-hidden shadow-elevated cursor-pointer"
+              whileTap={{ scale: 0.995 }}
             >
+
               <div className={`${meta.bar} font-bold flex items-center justify-center gap-2 py-4 text-base`}>
                 {meta.icon}
                 <span>{meta.title}</span>
