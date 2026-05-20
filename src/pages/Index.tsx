@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Helmet } from "react-helmet-async";
 import SplashScreen from "./screens/SplashScreen";
 import PrivacyConsentScreen from "./screens/PrivacyConsentScreen";
 import WalletScreen from "./screens/WalletScreen";
