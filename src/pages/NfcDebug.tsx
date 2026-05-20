@@ -441,7 +441,7 @@ const NfcDebug = () => {
     ? Math.round((changedCount / diffEntries.length) * 100)
     : 0;
 
-  const handleExportDiff = () => {
+  const handleExportDiff = async () => {
     if (!snapA || !snapB) return;
     const payload = {
       snapshotA: { id: snapA.id, timestamp: snapA.timestamp, uid: snapA.uid },
@@ -449,7 +449,7 @@ const NfcDebug = () => {
       changedBlocks: diffEntries.filter((d) => d.changed),
       unchangedBlocks: diffEntries.filter((d) => !d.changed),
     };
-    triggerDownload(`diff_${fileStamp()}.json`, JSON.stringify(payload, null, 2));
+    await triggerDownload(`diff_${fileStamp()}.json`, JSON.stringify(payload, null, 2));
     console.log("DIFF GENERATED");
   };
 
