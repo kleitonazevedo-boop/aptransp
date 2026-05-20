@@ -7,43 +7,38 @@ type NfcPayload = {
 };
 
 const NfcDebug = () => {
-  const [raw, setRaw] = useState("");
+  const [raw, setRaw] = useState<unknown>(null);
   const [parsed, setParsed] = useState<NfcPayload | null>(null);
   const [uid, setUid] = useState("");
   const [tech, setTech] = useState<string[]>([]);
+  const [timestamp, setTimestamp] = useState<number | null>(null);
   const [error, setError] = useState("");
 
   useEffect(() => {
     const handler = (event: Event) => {
-      const detail = (event as CustomEvent).detail;
-      const rawText = String(detail);
-
-      setRaw(rawText);
-      setError("");
-
       try {
-        const data = JSON.parse(rawText) as NfcPayload;
+        const detail = (event as CustomEvent).detail;
+        console.log("[NFC Debug] event.detail:", detail);
 
+        setRaw(detail);
+        setError("");
+
+        const data = (detail ?? {}) as NfcPayload;
         setParsed(data);
         setUid(typeof data.uid === "string" ? data.uid : "");
         setTech(Array.isArray(data.tech) ? data.tech : []);
+        setTimestamp(typeof data.timestamp === "number" ? data.timestamp : null);
       } catch (err) {
-        setParsed(null);
-        setUid("");
-        setTech([]);
-        setError(err instanceof Error ? err.message : "Erro ao ler JSON");
+        setError(err instanceof Error ? err.message : "Erro ao ler evento");
       }
     };
 
     window.addEventListener("nfcResult", handler);
-
-    return () => {
-      window.removeEventListener("nfcResult", handler);
-    };
+    return () => window.removeEventListener("nfcResult", handler);
   }, []);
 
   const simulate = () => {
-    const payload = {
+    const payload: NfcPayload = {
       uid: "4F:2B:4F:A8",
       tech: [
         "android.nfc.tech.MifareClassic",
@@ -53,11 +48,17 @@ const NfcDebug = () => {
       timestamp: Date.now(),
     };
 
-    window.dispatchEvent(
-      new CustomEvent("nfcResult", {
-        detail: JSON.stringify(payload),
-      })
-    );
+    window.dispatchEvent(new CustomEvent("nfcResult", { detail: payload }));
+  };
+
+  const formatRaw = (value: unknown) => {
+    if (value === null || value === undefined) return "Aguardando evento NFC";
+    if (typeof value === "string") return value;
+    try {
+      return JSON.stringify(value, null, 2);
+    } catch {
+      return String(value);
+    }
   };
 
   return (
@@ -81,18 +82,16 @@ const NfcDebug = () => {
         </button>
 
         <section className="rounded-lg border border-slate-700 bg-slate-900 p-4">
-          <h2 className="font-mono text-sm font-bold text-emerald-300">RAW</h2>
+          <h2 className="font-mono text-sm font-bold text-emerald-300">RAW EVENT</h2>
           <pre className="mt-3 whitespace-pre-wrap break-words font-mono text-xs text-slate-200">
-            {raw || "Aguardando evento NFC"}
+            {formatRaw(raw)}
           </pre>
         </section>
 
         <section className="rounded-lg border border-slate-700 bg-slate-900 p-4">
-          <h2 className="font-mono text-sm font-bold text-emerald-300">
-            PARSED
-          </h2>
+          <h2 className="font-mono text-sm font-bold text-emerald-300">PARSED JSON</h2>
           <pre className="mt-3 whitespace-pre-wrap break-words font-mono text-xs text-slate-200">
-            {parsed ? JSON.stringify(parsed, null, 2) : "Aguardando JSON válido"}
+            {parsed ? JSON.stringify(parsed, null, 2) : "Aguardando objeto"}
           </pre>
         </section>
 
@@ -107,6 +106,13 @@ const NfcDebug = () => {
           <h2 className="font-mono text-sm font-bold text-emerald-300">TECH</h2>
           <pre className="mt-3 whitespace-pre-wrap break-words font-mono text-xs text-cyan-200">
             {tech.length > 0 ? tech.join("\n") : "-"}
+          </pre>
+        </section>
+
+        <section className="rounded-lg border border-slate-700 bg-slate-900 p-4">
+          <h2 className="font-mono text-sm font-bold text-emerald-300">TIMESTAMP</h2>
+          <pre className="mt-3 whitespace-pre-wrap break-words font-mono text-xs text-slate-200">
+            {timestamp ? `${timestamp} (${new Date(timestamp).toISOString()})` : "-"}
           </pre>
         </section>
 
