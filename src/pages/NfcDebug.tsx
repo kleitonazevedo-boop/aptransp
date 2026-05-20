@@ -385,31 +385,12 @@ const NfcDebug = () => {
 
   const handleExportJson = async () => {
     if (!parsed) return;
-    const hexDump = (authResults ?? []).flatMap((r) =>
-      (r.blocks ?? []).map((b) => ({
-        sector: r.sector,
-        block: b.block,
-        hex: b.hex,
-        isTrailer: isTrailerBlock(b.block, r.sector, b.isTrailer),
-      })),
-    );
-    const dump = {
-      uid,
-      timestamp: timestamp ?? Date.now(),
-      mifareType,
-      mifareSize,
-      sectorCount,
-      blockCount,
-      tech,
-      authResults: authResults ?? [],
-      hexDump,
-      snapshotData: parsed,
-    };
+    const dump = buildForensicDumpPayload();
     await triggerDownload(`dump_${fileStamp()}.json`, JSON.stringify(dump, null, 2));
     console.log("EXPORT GENERATED");
   };
 
-  const handleSaveSnapshot = () => {
+  const handleSaveSnapshot = async () => {
     if (!parsed) return;
     const snap: Snapshot = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -420,6 +401,18 @@ const NfcDebug = () => {
     const next = [snap, ...snapshots].slice(0, 50);
     setSnapshots(next);
     persistSnapshots(next);
+    console.log("SNAPSHOT SAVED", snap);
+    const snapshotDump = buildForensicDumpPayload(snap);
+    await triggerDownload(
+      `snapshot_${fileStamp()}.json`,
+      JSON.stringify(snapshotDump, null, 2),
+      "application/json",
+      {
+        fileCreated: "SNAPSHOT FILE CREATED",
+        shareOpened: "SNAPSHOT SHARE OPENED",
+        error: "SNAPSHOT EXPORT ERROR",
+      },
+    );
     console.log("SNAPSHOT SAVED", snap);
   };
 
