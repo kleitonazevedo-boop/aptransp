@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { Helmet } from "react-helmet-async";
 import SplashScreen from "./screens/SplashScreen";
 import PrivacyConsentScreen from "./screens/PrivacyConsentScreen";
 import WalletScreen from "./screens/WalletScreen";
@@ -35,7 +36,13 @@ const Index = () => {
   };
 
   return (
-    <div className="app-shell">
+    <>
+      <Helmet>
+        <title>aptransp — Consulta de Saldo de Bilhete Único</title>
+        <meta name="description" content="Consulte o saldo do seu Bilhete Único de forma rápida e fácil. Leitura NFC do cartão de transporte público em tempo real." />
+        <link rel="canonical" href="https://bilhete-tap-reader.lovable.app/" />
+      </Helmet>
+      <div className="app-shell">
       {screen === "splash" && <SplashScreen onEnter={handleEnter} />}
       {screen === "consent" && <PrivacyConsentScreen onAccept={handleAcceptConsent} />}
       {screen === "wallet" && (
@@ -61,6 +68,7 @@ const Index = () => {
       {screen === "privacy" && <PrivacyPolicyScreen onBack={() => setScreen("about")} />}
       {screen === "terms" && <TermsScreen onBack={() => setScreen("about")} />}
     </div>
+    </>
   );
 };
 
