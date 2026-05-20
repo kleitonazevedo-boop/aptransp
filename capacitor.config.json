@@ -1,9 +1,5 @@
 {
   "appId": "app.lovable.b0f28e4795554c3199e588d60bf8193f",
   "appName": "APTRANSP",
-  "webDir": "dist",
-  "server": {
-    "url": "https://b0f28e47-9555-4c31-99e5-88d60bf8193f.lovableproject.com?forceHideBadge=true",
-    "cleartext": true
-  }
+  "webDir": "dist"
 }
