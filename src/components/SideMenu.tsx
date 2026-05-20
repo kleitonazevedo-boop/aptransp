@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Menu, Wallet, Map, Info, Route, Code2, ChevronDown, Radio } from "lucide-react";
+import { Menu, Wallet, Map, Info, Route, Code2, ChevronDown, Radio, Terminal } from "lucide-react";
 import { Logo } from "./Logo";
 
 interface Props {
