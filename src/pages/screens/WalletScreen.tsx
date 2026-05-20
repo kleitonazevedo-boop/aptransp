@@ -347,7 +347,6 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
               transition={spring}
               style={{ zIndex }}
               className={`absolute -left-px -right-px rounded-t-3xl overflow-hidden shadow-elevated cursor-pointer ${meta.body}`}
-              whileTap={{ scale: 0.995 }}
             >
 
               <div className={`${meta.bar} font-bold flex items-center justify-center gap-2 py-4 text-base`}>
