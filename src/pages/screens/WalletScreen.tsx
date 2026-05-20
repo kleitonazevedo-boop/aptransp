@@ -17,7 +17,7 @@ type CardId = "balance" | "map" | "route";
 const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: Props) => {
   const [balance, setBalance] = useState<number | null>(null);
   const [reading, setReading] = useState(false);
-  const [active, setActive] = useState<CardId>("balance");
+  const [active, setActive] = useState<CardId | null>(null);
 
   const handleTap = () => {
     if (reading) return;
@@ -30,7 +30,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
   };
 
   const order: CardId[] = ["balance", "map", "route"];
-  const activeIndex = order.indexOf(active);
+  const activeIndex = active ? order.indexOf(active) : -1;
 
   const cardMeta: Record<CardId, { title: string; bar: string; icon: JSX.Element }> = {
     balance: {
@@ -105,7 +105,8 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
     );
   };
 
-  const COLLAPSED_PEEK = 64; // px visible per collapsed card at bottom
+  const COLLAPSED_PEEK = 64;
+  const INITIAL_BALANCE_HEIGHT = "50%";
 
   return (
     <div className="flex-1 flex flex-col bg-slate-100 relative overflow-hidden">
@@ -126,47 +127,56 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
         {order.map((id, index) => {
           const isActive = id === active;
           const meta = cardMeta[id];
-          const positionFromActive = index - activeIndex;
+          const isInitial = active === null;
+          const positionFromActive = activeIndex >= 0 ? index - activeIndex : 0;
 
-          // Active card fills the deck. Cards below the active peek from the bottom.
-          // Cards above the active (already visited) tuck near the top.
-          let top = 0;
-          let zIndex = 10;
+          let top: number | string = 0;
+          let height: number | string = `${COLLAPSED_PEEK + 24}px`;
+          let zIndex = 10 + index;
 
-          if (positionFromActive === 0) {
+          if (isInitial) {
+            if (id === "balance") {
+              top = 0;
+              height = INITIAL_BALANCE_HEIGHT;
+              zIndex = 30;
+            } else {
+              top = `calc(${INITIAL_BALANCE_HEIGHT} + ${(index - 1) * 58}px)`;
+              height = `calc(50% - ${(index - 1) * 58}px)`;
+              zIndex = 30 + index;
+            }
+          } else if (isActive) {
             top = 0;
-            zIndex = 30;
+            height = "calc(100% - 24px)";
+            zIndex = 40;
           } else if (positionFromActive > 0) {
-            // peeks at bottom — stack downward
-            top = `calc(100% - ${(order.length - index) * COLLAPSED_PEEK}px)` as unknown as number;
-            zIndex = 20 + positionFromActive;
+            top = `calc(100% - ${(order.length - index) * COLLAPSED_PEEK}px)`;
+            zIndex = 30 + positionFromActive;
           } else {
-            // collapsed above (visited)
-            top = (index * 18) as number;
-            zIndex = 5 + index;
+            top = index * 18;
+            zIndex = 10 + index;
           }
 
           return (
             <motion.div
               key={id}
-              onClick={() => !isActive && setActive(id)}
+              onClick={() => setActive(isActive ? null : id)}
               initial={false}
               animate={{
-                top: top as any,
-                height: isActive ? "calc(100% - 24px)" : `${COLLAPSED_PEEK + 24}px`,
-                scale: isActive ? 1 : 0.98,
+                 top,
+                 height,
+                 scale: isActive || isInitial ? 1 : 0.98,
               }}
               transition={spring}
               style={{ zIndex }}
-              className={`absolute left-3 right-3 rounded-[2rem] overflow-hidden shadow-elevated bg-white ${isActive ? "" : "cursor-pointer"}`}
-              whileTap={isActive ? undefined : { scale: 0.96 }}
+              className="absolute left-3 right-3 rounded-[2rem] overflow-hidden shadow-elevated bg-white cursor-pointer"
+              whileTap={{ scale: 0.98 }}
             >
               <div className={`${meta.bar} font-bold flex items-center justify-center gap-2 py-4 text-lg`}>
                 {meta.icon}
                 <span>{meta.title}</span>
               </div>
               <AnimatePresence>
-                {isActive && (
+                {(isActive || (isInitial && id === "balance")) && (
                   <motion.div
                     key="content"
                     initial={{ opacity: 0 }}
