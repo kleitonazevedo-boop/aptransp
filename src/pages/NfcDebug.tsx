@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Lock, Unlock, Database, Key } from "lucide-react";
+import { Lock, Unlock, Database, Key, Download } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 type MifareBlock = {
