@@ -1,7 +1,8 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Smartphone, Wifi, AlertTriangle, Loader2, CheckCircle2, XCircle, Radio } from "lucide-react";
+import { ArrowLeft, Smartphone, AlertTriangle, Loader2, CheckCircle2, XCircle, Radio } from "lucide-react";
+
 import { Logo } from "@/components/Logo";
-import { Button } from "@/components/ui/button";
+
 import { Card } from "@/components/ui/card";
 import { onNfcResult, type NfcData, type NfcStatus } from "@/services/nfcService";
 
@@ -38,7 +39,9 @@ const detectDevice = (): DeviceStatus => {
 
 const NfcDiagnosticScreen = ({ onBack }: Props) => {
   const [device, setDevice] = useState<DeviceStatus | null>(null);
-  const [status, setStatus] = useState<NfcStatus>("idle");
+  // A tela vive em modo de escuta contínua — começa em "scanning"
+  // (aguardando aproximação) e troca para "detected" ao receber o evento.
+  const [status, setStatus] = useState<NfcStatus>("scanning");
   const [result, setResult] = useState<NfcData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,22 +49,19 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
     setDevice(detectDevice());
   }, []);
 
-  // Listener global de eventos NFC vindos do bridge nativo (Capacitor)
+  // Listener global de eventos NFC vindos do bridge nativo (Capacitor).
+  // Atualização AO VIVO — sem botão, sem refresh.
   useEffect(() => {
     const unsubscribe = onNfcResult((data) => {
       console.log("NFC DATA:", data);
       setResult(data);
-      setStatus("success");
+      setStatus("detected");
       setError(null);
     });
     return unsubscribe;
   }, []);
 
-  const handleStartScan = () => {
-    setError(null);
-    setResult(null);
-    setStatus("scanning");
-  };
+
 
   return (
     <div className="flex-1 flex flex-col bg-slate-50">
@@ -106,31 +106,23 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
         <Card className="p-4 rounded-2xl">
           <div className="flex items-center gap-2 mb-3">
             <Radio className="w-4 h-4 text-primary" />
-            <h2 className="font-semibold text-sm">2. Leitura NFC técnica</h2>
+            <h2 className="font-semibold text-sm">2. Leitura NFC em tempo real</h2>
             <StatusBadge status={status} />
           </div>
 
-          <Button
-            onClick={handleStartScan}
-            disabled={status === "scanning"}
-            className="w-full"
-            size="lg"
-          >
-            {status === "scanning" ? (
-              <>
-                <Loader2 className="w-4 h-4 animate-spin" /> Aguardando cartão…
-              </>
-            ) : (
-              <>
-                <Wifi className="w-4 h-4" /> Iniciar leitura NFC
-              </>
-            )}
-          </Button>
-
-          {status === "scanning" && (
-            <p className="text-xs text-muted-foreground mt-3 text-center">
-              Aproxime o cartão NFC da parte traseira do aparelho.
-            </p>
+          {(status === "scanning" || status === "idle") && !result && (
+            <div className="flex flex-col items-center justify-center py-6 gap-3">
+              <div className="relative w-20 h-20 flex items-center justify-center">
+                <span className="absolute w-20 h-20 rounded-full border-2 border-primary/40 animate-nfc-wave" />
+                <span className="absolute w-20 h-20 rounded-full border-2 border-primary/40 animate-nfc-wave-2" />
+                <div className="w-12 h-12 rounded-full bg-primary/15 flex items-center justify-center">
+                  <Loader2 className="w-6 h-6 text-primary animate-spin" />
+                </div>
+              </div>
+              <p className="text-xs text-muted-foreground text-center">
+                Aproxime o cartão NFC da parte traseira do aparelho.
+              </p>
+            </div>
           )}
 
           {error && (
@@ -140,10 +132,11 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
             </div>
           )}
 
-          {status === "success" && result && (
-            <div className="mt-4 space-y-3">
+          {result && (
+            <div className="mt-2 space-y-3">
               <div className="flex items-center gap-2 text-success text-xs font-medium">
-                <CheckCircle2 className="w-4 h-4" /> Cartão detectado com sucesso
+                <CheckCircle2 className="w-4 h-4" />
+                {status === "detected" ? "Cartão detectado" : "Último cartão lido"}
               </div>
               <dl className="text-xs space-y-2 bg-slate-100 rounded-lg p-3">
                 <Row label="UID" value={result.uid} mono />
@@ -155,13 +148,13 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
                   />
                 )}
               </dl>
-              <p className="text-[10px] text-muted-foreground leading-snug">
-                Saldo: <strong>indisponível</strong> nesta versão (mock). A leitura de saldo
-                será adicionada em etapa futura.
+              <p className="text-[10px] text-muted-foreground leading-snug text-center">
+                Aproxime outro cartão para atualizar.
               </p>
             </div>
           )}
         </Card>
+
 
         <Card className="p-4 rounded-2xl">
           <div className="flex items-center gap-2 mb-2">
@@ -184,7 +177,7 @@ const StatusBadge = ({ status }: { status: NfcStatus }) => {
   const map: Record<NfcStatus, { label: string; cls: string }> = {
     idle: { label: "idle", cls: "bg-slate-200 text-slate-700" },
     scanning: { label: "scanning", cls: "bg-brand-yellow/30 text-yellow-800" },
-    success: { label: "success", cls: "bg-success/20 text-success" },
+    detected: { label: "detected", cls: "bg-success/20 text-success" },
     error: { label: "error", cls: "bg-destructive/15 text-destructive" },
   };
   const s = map[status];

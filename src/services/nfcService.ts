@@ -8,7 +8,7 @@ export interface NfcData {
   timestamp?: number;
 }
 
-export type NfcStatus = "idle" | "scanning" | "success" | "error";
+export type NfcStatus = "idle" | "scanning" | "detected" | "error";
 
 type NfcCallback = (data: NfcData) => void;
 type UnsubscribeFn = () => void;
