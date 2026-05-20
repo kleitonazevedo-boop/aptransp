@@ -132,22 +132,39 @@ const NfcDebug = () => {
       sectorCount: 16,
       blockCount: 64,
       authResults: [
-        { sector: 0, authenticated: true },
-        { sector: 1, authenticated: true },
+        {
+          sector: 0,
+          authenticated: true,
+          blocks: [
+            { block: 0, hex: "4F 2B 4F A8 BC 08 04 00 62 63 64 65 66 67 68 69" },
+            { block: 1, hex: "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00" },
+            { block: 2, hex: "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00" },
+            { block: 3, hex: "FF FF FF FF FF FF FF 07 80 69 FF FF FF FF FF FF" },
+          ],
+        },
+        {
+          sector: 1,
+          authenticated: true,
+          blocks: [
+            { block: 4, hex: "A1 22 FF 90 00 14 FF 22 11 00 AB CD EF 01 02 03" },
+            { block: 5, hex: "00 14 FF 22 11 00 AB CD EF 01 02 03 04 05 06 07" },
+            { block: 6, hex: "11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00" },
+            { block: 7, hex: "FF FF FF FF FF FF FF 07 80 69 FF FF FF FF FF FF" },
+          ],
+        },
         { sector: 2, authenticated: true },
         { sector: 3, authenticated: false },
         { sector: 4, authenticated: true },
         { sector: 5, authenticated: false },
-        { sector: 6, authenticated: true },
-        { sector: 7, authenticated: true },
-        { sector: 8, authenticated: false },
-        { sector: 9, authenticated: true },
-        { sector: 10, authenticated: false },
-        { sector: 11, authenticated: true },
-        { sector: 12, authenticated: true },
-        { sector: 13, authenticated: true },
-        { sector: 14, authenticated: false },
-        { sector: 15, authenticated: true },
+        {
+          sector: 16,
+          authenticated: true,
+          blocks: [
+            { block: 64, hex: "A1 22 FF 90 00 14 FF 22 11 00 AB CD EF 01 02 03" },
+            { block: 65, hex: "00 14 FF 22 11 00 AB CD EF 01 02 03 04 05 06 07" },
+            { block: 67, hex: "FF FF FF FF FF FF FF 07 80 69 FF FF FF FF FF FF" },
+          ],
+        },
       ],
     };
 
