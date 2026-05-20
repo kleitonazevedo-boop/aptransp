@@ -1,19 +1,18 @@
 package app.lovable.b0f28e4795554c3199e588d60bf8193f.nfc
 
+import android.app.Activity
 import android.app.PendingIntent
 import android.content.Intent
-import android.content.IntentFilter
 import android.nfc.*
 import android.nfc.tech.IsoDep
 import android.nfc.tech.MifareClassic
 import android.nfc.tech.NfcA
 import android.util.Log
 import com.getcapacitor.Bridge
-import com.getcapacitor.JSObject
-import com.getcapacitor.JSArray
+import org.json.JSONObject
 
 class NfcHandler(
-    private val activity: android.app.Activity,
+    private val activity: Activity,
     private val bridge: Bridge
 ) {
 
@@ -34,14 +33,8 @@ class NfcHandler(
             activity,
             0,
             intent,
-            if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                PendingIntent.FLAG_MUTABLE
-            } else {
-                0
-            }
+            PendingIntent.FLAG_MUTABLE
         )
-
-        val filters = arrayOf<IntentFilter>()
 
         val techList = arrayOf(
             arrayOf(NfcA::class.java.name),
@@ -52,7 +45,7 @@ class NfcHandler(
         adapter.enableForegroundDispatch(
             activity,
             pendingIntent,
-            filters,
+            arrayOf(),
             techList
         )
     }
@@ -67,27 +60,29 @@ class NfcHandler(
         val tag: Tag? = intent.getParcelableExtra(NfcAdapter.EXTRA_TAG)
 
         tag?.let {
-            val uid = it.id.joinToString(":") { b -> "%02X".format(b) }
 
+            val uid = it.id.joinToString(":") { b -> "%02X".format(b) }
             val techs = it.techList.toList()
 
-            Log.d("NFC", "UID: $uid")
+            // 🔥 DEBUG NFC
+            Log.d("NFC_DEBUG", "TAG DETECTADA")
+            Log.d("NFC_DEBUG", "UID GERADO: $uid")
 
-            sendToWeb(uid, techs)
+            // 📦 JSON para envio seguro ao WebView
+            val json = JSONObject().apply {
+                put("uid", uid)
+                put("tech", techs)
+            }
+
+            Log.d("NFC_DEBUG", "🔥 VOU ENVIAR PARA WEBVIEW")
+
+            // ✅ COMPATÍVEL COM SEU CAPACITOR (String esperado)
+            bridge.triggerJSEvent(
+                "nfcResult",
+                json.toString()
+            )
+
+            Log.d("NFC_DEBUG", "🔥 ENVIO CONCLUÍDO")
         }
-    }
-
-    private fun sendToWeb(uid: String, techs: List<String>) {
-        val data = JSObject()
-        data.put("uid", uid)
-        
-        val techsArray = JSArray()
-        techs.forEach { techsArray.put(it) }
-        data.put("tech", techsArray)
-
-        bridge.triggerWindowJSEvent(
-            "nfcResult",
-            data.toString()
-        )
     }
 }

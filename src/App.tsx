@@ -15,7 +15,15 @@ const App = () => {
   // e republica como "nfc:update" para que qualquer tela/contexto consuma.
   useEffect(() => {
     const handler = (event: Event) => {
-      const data = (event as CustomEvent<NfcData>).detail;
+      const raw = (event as CustomEvent).detail;
+      // Android envia via triggerJSEvent como STRING JSON — fazer parse defensivo
+      let data: NfcData | unknown = raw;
+      try {
+        if (typeof raw === "string") data = JSON.parse(raw);
+      } catch (err) {
+        console.error("Falha ao parsear nfcResult:", err, raw);
+        return;
+      }
       console.log("NFC RECEBIDO:", data);
       window.dispatchEvent(new CustomEvent("nfc:update", { detail: data }));
     };

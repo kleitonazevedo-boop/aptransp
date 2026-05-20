@@ -2,6 +2,7 @@ package app.lovable.b0f28e4795554c3199e588d60bf8193f
 
 import android.content.Intent
 import android.os.Bundle
+import android.util.Log
 import com.getcapacitor.BridgeActivity
 import app.lovable.b0f28e4795554c3199e588d60bf8193f.nfc.NfcHandler
 
@@ -32,8 +33,11 @@ class MainActivity : BridgeActivity() {
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
+        Log.d("NFC_DEBUG", "🔥 onNewIntent FOI CHAMADO")
         if (::nfcHandler.isInitialized) {
             nfcHandler.handleIntent(intent)
+        } else {
+            Log.w("NFC_DEBUG", "NfcHandler ainda não foi inicializado")
         }
     }
 }
