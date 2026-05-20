@@ -118,6 +118,11 @@ const triggerDownload = async (
   filename: string,
   content: string,
   mime = "application/json",
+  labels = {
+    fileCreated: "EXPORT FILE CREATED",
+    shareOpened: "EXPORT SHARE OPENED",
+    error: "EXPORT ERROR",
+  },
 ) => {
   try {
     if (isNativePlatform()) {
@@ -131,7 +136,7 @@ const triggerDownload = async (
         encoding: Encoding.UTF8,
         recursive: true,
       });
-      console.log("EXPORT FILE CREATED", filename);
+      console.log(labels.fileCreated, filename);
 
       const fileInfo = await Filesystem.getUri({
         directory: Directory.Documents,
@@ -144,7 +149,7 @@ const triggerDownload = async (
         url: fileInfo.uri,
         dialogTitle: "Compartilhar dump NFC",
       });
-      console.log("EXPORT SHARE OPENED");
+      console.log(labels.shareOpened);
       return;
     }
 
@@ -158,9 +163,9 @@ const triggerDownload = async (
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    console.log("EXPORT FILE CREATED", filename);
+    console.log(labels.fileCreated, filename);
   } catch (error) {
-    console.error("EXPORT ERROR", error);
+    console.error(labels.error, error);
   }
 };
 
