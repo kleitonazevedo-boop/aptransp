@@ -524,7 +524,8 @@ export type ForensicReport = {
   valueCandidates: ValueCandidate[];
   entropy: {
     overall: number;
-    perBlock: { block: number; sector: number; entropy: number }[];
+    overallClass: EntropyClass;
+    perBlock: { block: number; sector: number; entropy: number; class: EntropyClass }[];
   };
   variability: VariableBlockRow[];
   snapshotsCount: number;
@@ -545,13 +546,14 @@ export const buildForensicReport = async (
   const asciiHits = extractReadableStrings(blocks);
   const valueCandidates = detectValueCandidates(blocks);
   const allBytes = blocks.flatMap((b) => b.bytes);
+  const overallEntropy = shannonEntropy(allBytes);
   const entropy = {
-    overall: shannonEntropy(allBytes),
-    perBlock: blocks.map((b) => ({
-      block: b.block,
-      sector: b.sector,
-      entropy: shannonEntropy(b.bytes),
-    })),
+    overall: overallEntropy,
+    overallClass: classifyEntropy(overallEntropy, allBytes.length === 0 || allBytes.every((x) => x === 0)),
+    perBlock: blocks.map((b) => {
+      const e = shannonEntropy(b.bytes);
+      return { block: b.block, sector: b.sector, entropy: e, class: classifyEntropy(e, b.isEmpty) };
+    }),
   };
   const variability = analyzeVariability(snapshots);
 
