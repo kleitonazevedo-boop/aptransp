@@ -70,6 +70,7 @@ class NfcHandler(
             var mifareSize: Int? = null
             var mifareSectorCount: Int? = null
             var mifareBlockCount: Int? = null
+            var authResultsJson: JSONArray? = null
 
             // =========================
             // MIFARE CLASSIC
@@ -83,6 +84,70 @@ class NfcHandler(
                     mifareSize = mifare.size
                     mifareSectorCount = mifare.sectorCount
                     mifareBlockCount = mifare.blockCount
+
+                    val authResults = JSONArray()
+
+                    for (sector in 0 until mifare.sectorCount) {
+
+                        val auth = mifare.authenticateSectorWithKeyA(
+                            sector,
+                            MifareClassic.KEY_DEFAULT
+                        )
+
+                        Log.d(
+                            "MIFARE_AUTH",
+                            "Sector $sector -> $auth"
+                        )
+
+                        val sectorJson = JSONObject().apply {
+                            put("sector", sector)
+                            put("authenticated", auth)
+                        }
+
+                        if (auth) {
+                            // =========================
+                            // LEITURA HEX
+                            // =========================
+                            val blockDataArray = JSONArray()
+                            val startBlock = mifare.sectorToBlock(sector)
+                            val blockCountInSector = mifare.getBlockCountInSector(sector)
+
+                            for (i in 0 until blockCountInSector) {
+                                val blockIndex = startBlock + i
+                                try {
+                                    val data = mifare.readBlock(blockIndex)
+                                    val hex = data.joinToString(" ") {
+                                        "%02X".format(it)
+                                    }
+
+                                    Log.d(
+                                        "MIFARE_BLOCK",
+                                        "Sector $sector Block $blockIndex -> $hex"
+                                    )
+
+                                    val isTrailer = i == blockCountInSector - 1
+
+                                    val blockJson = JSONObject().apply {
+                                        put("block", blockIndex)
+                                        put("hex", hex)
+                                        put("isTrailer", isTrailer)
+                                    }
+                                    blockDataArray.put(blockJson)
+                                } catch (e: Exception) {
+                                    Log.e(
+                                        "MIFARE_BLOCK",
+                                        "Erro bloco $blockIndex",
+                                        e
+                                    )
+                                }
+                            }
+                            sectorJson.put("blocks", blockDataArray)
+                        }
+
+                        authResults.put(sectorJson)
+                    }
+
+                    authResultsJson = authResults
 
                     Log.d("MIFARE", "TYPE: $mifareType")
                     Log.d("MIFARE", "SIZE: $mifareSize")
@@ -144,6 +209,8 @@ class NfcHandler(
                 put("sectorCount", mifareSectorCount ?: JSONObject.NULL)
 
                 put("blockCount", mifareBlockCount ?: JSONObject.NULL)
+
+                put("authResults", authResultsJson ?: JSONObject.NULL)
             }
 
             Log.d(
