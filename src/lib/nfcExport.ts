@@ -44,13 +44,16 @@ export const triggerDownload = async (
         path: filename,
       });
 
+      // IMPORTANT: Android Share Sheet uses `title` as the visible filename when
+      // sharing via apps like Drive / Gmail. Use the real filename here so the
+      // saved file keeps its forensic timestamped name instead of a generic label.
       await Share.share({
-        title: "NFC Forensic Report",
+        title: filename,
         text: filename,
         url: fileInfo.uri,
-        dialogTitle: "Compartilhar dump NFC",
+        dialogTitle: `Salvar / compartilhar ${filename}`,
       });
-      console.log(labels.shareOpened);
+      console.log(labels.shareOpened, filename);
       return;
     }
 
