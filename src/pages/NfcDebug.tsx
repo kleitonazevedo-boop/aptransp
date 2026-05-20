@@ -14,6 +14,7 @@ import {
   FileJson,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import ForensicReport from "@/components/ForensicReport";
 
 type MifareBlock = {
   block: number;
@@ -1079,6 +1080,13 @@ const NfcDebug = () => {
             </ul>
           )}
         </section>
+
+        {/* FORENSIC ANALYZER MODULE */}
+        <ForensicReport
+          parsed={parsed}
+          snapshots={snapshots}
+          diff={snapA && snapB ? diffEntries : null}
+        />
 
         <section className="rounded-lg border border-slate-700 bg-slate-900 p-4">
           <h2 className="font-mono text-sm font-bold text-emerald-300">UID</h2>
