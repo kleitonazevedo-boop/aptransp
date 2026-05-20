@@ -1014,6 +1014,7 @@ const NfcDebug = () => {
         </section>
       </div>
     </main>
+    </>
   );
 };
 
