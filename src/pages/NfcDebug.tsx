@@ -334,6 +334,98 @@ const NfcDebug = () => {
           )}
         </AnimatePresence>
 
+        <AnimatePresence>
+          {authResults && authResults.some((r) => r.blocks && r.blocks.length > 0) && (
+            <motion.section
+              key={`dump-${authKey}`}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+              className="rounded-lg border border-fuchsia-500/60 bg-slate-900 p-4"
+            >
+              <h2 className="font-mono text-sm font-bold text-fuchsia-300 flex items-center gap-2">
+                <Database className="w-4 h-4" />
+                BLOCK DUMP
+                <span className="ml-auto rounded border border-emerald-500 px-1.5 py-0.5 text-[9px] text-emerald-300">
+                  READ OK
+                </span>
+              </h2>
+              <p className="mt-1 font-mono text-[10px] text-slate-400">
+                Dump hexadecimal dos blocos MIFARE autenticados
+              </p>
+
+              <div className="mt-3 space-y-3">
+                {authResults
+                  .filter((r) => r.blocks && r.blocks.length > 0)
+                  .map((result, idx) => (
+                    <motion.div
+                      key={`${authKey}-dump-${result.sector}`}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.25, delay: idx * 0.05 }}
+                      className="rounded border border-slate-700 bg-slate-950 overflow-hidden"
+                    >
+                      <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-3 py-2 font-mono">
+                        <div className="flex items-center gap-2">
+                          <Key className="w-3.5 h-3.5 text-fuchsia-400" />
+                          <span className="text-xs font-bold text-fuchsia-300">
+                            Sector {result.sector}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                          {result.blocks?.length} blocks
+                        </span>
+                      </div>
+
+                      <div className="divide-y divide-slate-800/60">
+                        {result.blocks!.map((b) => {
+                          const trailer = isTrailerBlock(b.block, result.sector);
+                          return (
+                            <div
+                              key={`${result.sector}-${b.block}`}
+                              className={`px-3 py-2 font-mono ${
+                                trailer ? "bg-yellow-950/20" : ""
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span
+                                  className={`text-[10px] font-bold tracking-wider ${
+                                    trailer ? "text-yellow-300" : "text-cyan-300"
+                                  }`}
+                                >
+                                  Block {b.block}
+                                </span>
+                                <span
+                                  className={`text-[9px] uppercase tracking-wider rounded px-1.5 py-0.5 border ${
+                                    trailer
+                                      ? "border-yellow-500/60 text-yellow-300"
+                                      : "border-slate-700 text-slate-400"
+                                  }`}
+                                >
+                                  {trailer ? "TRAILER" : "DATA"}
+                                </span>
+                              </div>
+                              <div
+                                className={`mt-1 text-[11px] break-all leading-relaxed ${
+                                  trailer ? "text-yellow-200" : "text-emerald-300"
+                                }`}
+                              >
+                                {b.hex}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  ))}
+              </div>
+            </motion.section>
+          )}
+        </AnimatePresence>
+
+
+
         <section className="rounded-lg border border-slate-700 bg-slate-900 p-4">
           <h2 className="font-mono text-sm font-bold text-emerald-300">UID</h2>
           <pre className="mt-3 whitespace-pre-wrap break-words font-mono text-sm text-yellow-300">
