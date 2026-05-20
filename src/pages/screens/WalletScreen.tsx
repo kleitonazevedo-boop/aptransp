@@ -115,7 +115,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
       return (
         <button
           onClick={(e) => { e.stopPropagation(); handleTap(); }}
-          className="w-full h-full flex flex-col items-center justify-center text-white px-6"
+          className="w-full h-full flex flex-col items-center justify-center text-white px-6 pb-[240px]"
         >
           <p className="text-6xl font-light tracking-tight">
             {balance !== null ? balance.toFixed(2) : "00.00"}
