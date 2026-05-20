@@ -109,16 +109,59 @@ const formatTs = (ts: number) =>
     second: "2-digit",
   });
 
-const triggerDownload = (filename: string, content: string, mime = "application/json") => {
-  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+const isNativePlatform = (): boolean => {
+  const w = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } };
+  return !!w.Capacitor?.isNativePlatform?.();
+};
+
+const triggerDownload = async (
+  filename: string,
+  content: string,
+  mime = "application/json",
+) => {
+  try {
+    if (isNativePlatform()) {
+      const { Filesystem, Directory, Encoding } = await import("@capacitor/filesystem");
+      const { Share } = await import("@capacitor/share");
+
+      await Filesystem.writeFile({
+        path: filename,
+        directory: Directory.Documents,
+        data: content,
+        encoding: Encoding.UTF8,
+        recursive: true,
+      });
+      console.log("EXPORT FILE CREATED", filename);
+
+      const fileInfo = await Filesystem.getUri({
+        directory: Directory.Documents,
+        path: filename,
+      });
+
+      await Share.share({
+        title: "NFC Forensic Dump",
+        text: filename,
+        url: fileInfo.uri,
+        dialogTitle: "Compartilhar dump NFC",
+      });
+      console.log("EXPORT SHARE OPENED");
+      return;
+    }
+
+    // Web fallback
+    const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    console.log("EXPORT FILE CREATED", filename);
+  } catch (error) {
+    console.error("EXPORT ERROR", error);
+  }
 };
 
 const fileStamp = () => {
