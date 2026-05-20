@@ -1,18 +1,40 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Menu, Wallet, Map, Info, Route, Code2, ChevronDown, Radio, Terminal } from "lucide-react";
+import {
+  Menu,
+  Wallet,
+  Map,
+  Info,
+  Route,
+  Code2,
+  ChevronDown,
+  Radio,
+  Terminal,
+  Bell,
+  Star,
+} from "lucide-react";
 import { Logo } from "./Logo";
 
 interface Props {
   onBalance: () => void;
   onMap: () => void;
   onRoute: () => void;
+  onAlerts: () => void;
+  onFavorites: () => void;
   onAbout: () => void;
   onNfcDiagnostic: () => void;
 }
 
-export const SideMenu = ({ onBalance, onMap, onRoute, onAbout, onNfcDiagnostic }: Props) => {
+export const SideMenu = ({
+  onBalance,
+  onMap,
+  onRoute,
+  onAlerts,
+  onFavorites,
+  onAbout,
+  onNfcDiagnostic,
+}: Props) => {
   const [open, setOpen] = useState(false);
   const [devOpen, setDevOpen] = useState(false);
   const navigate = useNavigate();
@@ -38,74 +60,29 @@ export const SideMenu = ({ onBalance, onMap, onRoute, onAbout, onNfcDiagnostic }
           </div>
         </div>
         <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
-          <MenuItem
-            icon={<Wallet className="w-5 h-5" />}
-            label="Consulta de saldo"
-            onClick={() => {
-              onBalance();
-              close();
-            }}
-          />
-          <MenuItem
-            icon={<Map className="w-5 h-5" />}
-            label="Mapa do transporte"
-            onClick={() => {
-              onMap();
-              close();
-            }}
-          />
-          <MenuItem
-            icon={<Route className="w-5 h-5" />}
-            label="Traçado de Rota"
-            onClick={() => {
-              onRoute();
-              close();
-            }}
-          />
+          <MenuItem icon={<Wallet className="w-5 h-5" />} label="Consulta de saldo" onClick={() => { onBalance(); close(); }} />
+          <MenuItem icon={<Map className="w-5 h-5" />} label="Mapa do transporte" onClick={() => { onMap(); close(); }} />
+          <MenuItem icon={<Route className="w-5 h-5" />} label="Traçado de Rota" onClick={() => { onRoute(); close(); }} />
+          <MenuItem icon={<Bell className="w-5 h-5" />} label="Alertas" onClick={() => { onAlerts(); close(); }} />
+          <MenuItem icon={<Star className="w-5 h-5" />} label="Favoritos" onClick={() => { onFavorites(); close(); }} />
 
-          {/* Developer expandable */}
           <button
             onClick={() => setDevOpen((v) => !v)}
             className="w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/10 text-left"
           >
             <Code2 className="w-5 h-5" />
             <span className="font-medium flex-1">Desenvolvedor</span>
-            <ChevronDown
-              className={`w-4 h-4 transition-transform ${devOpen ? "rotate-180" : ""}`}
-            />
+            <ChevronDown className={`w-4 h-4 transition-transform ${devOpen ? "rotate-180" : ""}`} />
           </button>
           {devOpen && (
             <div className="pl-6 space-y-1">
-              <MenuItem
-                icon={<Radio className="w-4 h-4" />}
-                label="NFC Diagnostic Mode"
-                onClick={() => {
-                  onNfcDiagnostic();
-                  close();
-                }}
-                small
-              />
-              <MenuItem
-                icon={<Terminal className="w-4 h-4" />}
-                label="NFC Debug"
-                onClick={() => {
-                  navigate("/nfc-debug");
-                  close();
-                }}
-                small
-              />
+              <MenuItem icon={<Radio className="w-4 h-4" />} label="NFC Diagnostic Mode" onClick={() => { onNfcDiagnostic(); close(); }} small />
+              <MenuItem icon={<Terminal className="w-4 h-4" />} label="NFC Debug" onClick={() => { navigate("/nfc-debug"); close(); }} small />
             </div>
           )}
         </nav>
         <div className="p-3 border-t border-white/15">
-          <MenuItem
-            icon={<Info className="w-5 h-5" />}
-            label="Sobre"
-            onClick={() => {
-              onAbout();
-              close();
-            }}
-          />
+          <MenuItem icon={<Info className="w-5 h-5" />} label="Sobre" onClick={() => { onAbout(); close(); }} />
         </div>
       </SheetContent>
     </Sheet>
@@ -125,9 +102,7 @@ const MenuItem = ({
 }) => (
   <button
     onClick={onClick}
-    className={`w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/10 text-left ${
-      small ? "text-sm" : ""
-    }`}
+    className={`w-full flex items-center gap-3 p-3 rounded-xl hover:bg-white/10 text-left ${small ? "text-sm" : ""}`}
   >
     {icon}
     <span className="font-medium">{label}</span>
