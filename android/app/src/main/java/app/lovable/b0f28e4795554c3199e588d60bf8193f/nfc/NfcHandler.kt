@@ -66,6 +66,35 @@ class NfcHandler(
 
         tag?.let {
 
+            var mifareType: Int? = null
+            var mifareSize: Int? = null
+            var mifareSectorCount: Int? = null
+            var mifareBlockCount: Int? = null
+
+            // =========================
+            // MIFARE CLASSIC
+            // =========================
+            val mifare = MifareClassic.get(it)
+            if (mifare != null) {
+                Log.d("MIFARE", "MIFARE DETECTADO")
+                try {
+                    mifare.connect()
+                    mifareType = mifare.type
+                    mifareSize = mifare.size
+                    mifareSectorCount = mifare.sectorCount
+                    mifareBlockCount = mifare.blockCount
+
+                    Log.d("MIFARE", "TYPE: $mifareType")
+                    Log.d("MIFARE", "SIZE: $mifareSize")
+                    Log.d("MIFARE", "SECTORS: $mifareSectorCount")
+                    Log.d("MIFARE", "BLOCKS: $mifareBlockCount")
+                    
+                    mifare.close()
+                } catch (e: Exception) {
+                    Log.e("MIFARE", "Erro ao conectar Mifare: ${e.message}")
+                }
+            }
+
             // =========================
             // UID
             // =========================
@@ -103,6 +132,18 @@ class NfcHandler(
                 put("tech", techArray)
 
                 put("timestamp", System.currentTimeMillis())
+
+                // =========================
+                // MIFARE INFO
+                // =========================
+
+                put("mifareType", mifareType ?: JSONObject.NULL)
+
+                put("mifareSize", mifareSize ?: JSONObject.NULL)
+
+                put("sectorCount", mifareSectorCount ?: JSONObject.NULL)
+
+                put("blockCount", mifareBlockCount ?: JSONObject.NULL)
             }
 
             Log.d(
