@@ -284,8 +284,8 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
     );
   };
 
-  const COLLAPSED_PEEK = 56;
-  const INITIAL_BALANCE_HEIGHT = "70%";
+  const CARD_HEADER_HEIGHT = 56;
+  const STACK_START = `calc(100% - ${(order.length - 1) * CARD_HEADER_HEIGHT}px)`;
 
   return (
     <div className="flex-1 flex flex-col bg-brand-purple relative overflow-hidden">
@@ -311,30 +311,30 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
           const positionFromActive = activeIndex >= 0 ? index - activeIndex : 0;
 
           let top: number | string = 0;
-          let height: number | string = `${COLLAPSED_PEEK + 24}px`;
+          let height: number | string = "100%";
           let zIndex = 10 + index;
 
           if (isInitial) {
             if (id === "balance") {
               top = 0;
-              height = INITIAL_BALANCE_HEIGHT;
+              height = "100%";
               zIndex = 30;
             } else {
-              // collapsed cards peeking from bottom, stacked
-              const fromBottom = (order.length - 1 - index);
-              top = `calc(100% - ${(order.length - index) * COLLAPSED_PEEK + 8}px)`;
-              height = `${COLLAPSED_PEEK + 32}px`;
-              zIndex = 31 + (order.length - fromBottom);
+              top = `calc(${STACK_START} + ${(index - 1) * CARD_HEADER_HEIGHT}px)`;
+              height = "100%";
+              zIndex = 30 + index;
             }
           } else if (isActive) {
             top = 0;
             height = "100%";
             zIndex = 50;
           } else if (positionFromActive > 0) {
-            top = `calc(100% - ${(order.length - index) * COLLAPSED_PEEK}px)`;
+            top = `calc(100% - ${(order.length - index) * CARD_HEADER_HEIGHT}px)`;
+            height = "100%";
             zIndex = 30 + positionFromActive;
           } else {
-            top = index * 14;
+            top = index * 12;
+            height = "100%";
             zIndex = 10 + index;
           }
 
@@ -346,7 +346,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
               animate={{ top, height, scale: 1 }}
               transition={spring}
               style={{ zIndex }}
-              className="absolute left-0 right-0 rounded-t-3xl overflow-hidden shadow-elevated cursor-pointer"
+              className={`absolute -left-px -right-px rounded-t-3xl overflow-hidden shadow-elevated cursor-pointer ${meta.body}`}
               whileTap={{ scale: 0.995 }}
             >
 
