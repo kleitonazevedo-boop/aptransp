@@ -1,9 +1,9 @@
 import { useEffect, useState } from "react";
-import { ArrowLeft, Smartphone, Wifi, WifiOff, AlertTriangle, Loader2, CheckCircle2, XCircle, Radio } from "lucide-react";
+import { ArrowLeft, Smartphone, Wifi, AlertTriangle, Loader2, CheckCircle2, XCircle, Radio } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
-import { startNFCScan, type NfcData } from "@/services/nfcService";
+import { onNfcResult, type NfcData, type NfcStatus } from "@/services/nfcService";
 
 interface Props {
   onBack: () => void;
@@ -17,8 +17,6 @@ interface DeviceStatus {
   isNative: boolean;
 }
 
-type NfcDump = NfcData;
-
 const detectDevice = (): DeviceStatus => {
   const ua = navigator.userAgent;
   const w = window as unknown as {
@@ -27,59 +25,45 @@ const detectDevice = (): DeviceStatus => {
   };
   const isNative = !!w.Capacitor?.isNativePlatform?.();
   const platform = w.Capacitor?.getPlatform?.() ?? (isNative ? "native" : "web");
-  // Web NFC (NDEFReader) exists only on Chrome Android; treat as hint when not native.
   const webNfc = typeof w.NDEFReader !== "undefined";
   const looksAndroid = /Android/i.test(ua);
   const model = (ua.match(/\(([^)]+)\)/)?.[1] ?? "Desconhecido").slice(0, 60);
 
   return {
     hasNfc: isNative ? null : webNfc || looksAndroid ? true : false,
-    nfcEnabled: null, // só pode ser detectado por plugin nativo
+    nfcEnabled: null,
     model,
     platform,
     isNative,
   };
 };
 
-const randHex = (n: number) =>
-  Array.from({ length: n }, () =>
-    Math.floor(Math.random() * 256).toString(16).padStart(2, "0").toUpperCase(),
-  ).join(":");
-
-const simulateDump = (): NfcDump => ({
-  uid: randHex(7),
-  technologies: ["NfcA", "MifareClassic", "IsoDep"],
-  cardType: "MIFARE Classic 1K (simulado)",
-  atqa: "00:04",
-  sak: "08",
-  historicalBytes: randHex(8),
-  maxTransceiveLength: 253,
-  timestamp: Date.now(),
-});
-
 const NfcDiagnosticScreen = ({ onBack }: Props) => {
   const [device, setDevice] = useState<DeviceStatus | null>(null);
-  const [reading, setReading] = useState(false);
-  const [dump, setDump] = useState<NfcDump | null>(null);
+  const [status, setStatus] = useState<NfcStatus>("idle");
+  const [result, setResult] = useState<NfcData | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     setDevice(detectDevice());
   }, []);
 
-  const [nfcResult, setNfcResult] = useState<NfcDump | null>(null);
-
-  function handleStartScan() {
-    setReading(true);
-    setError(null);
-    setDump(null);
-    startNFCScan((data) => {
+  // Listener global de eventos NFC vindos do bridge nativo (Capacitor)
+  useEffect(() => {
+    const unsubscribe = onNfcResult((data) => {
       console.log("NFC DATA:", data);
-      setNfcResult(data);
-      setDump(data);
-      setReading(false);
+      setResult(data);
+      setStatus("success");
+      setError(null);
     });
-  }
+    return unsubscribe;
+  }, []);
+
+  const handleStartScan = () => {
+    setError(null);
+    setResult(null);
+    setStatus("scanning");
+  };
 
   return (
     <div className="flex-1 flex flex-col bg-slate-50">
@@ -95,16 +79,14 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
       </div>
 
       <div className="flex-1 overflow-y-auto px-4 py-4 space-y-4">
-        {/* Modo técnico warning */}
         <div className="flex items-start gap-2 bg-brand-yellow/15 border border-brand-yellow/40 rounded-xl p-3">
           <AlertTriangle className="w-5 h-5 text-brand-yellow shrink-0 mt-0.5" />
           <p className="text-xs text-foreground/80 leading-snug">
-            <strong className="font-semibold">Modo técnico.</strong> Esta tela é destinada
-            ao diagnóstico de hardware NFC e não realiza consulta de saldo.
+            <strong className="font-semibold">Modo técnico.</strong> Leitura realizada pelo módulo
+            nativo Android via Capacitor. O frontend apenas exibe os dados recebidos.
           </p>
         </div>
 
-        {/* 1. Status do dispositivo */}
         <Card className="p-4 rounded-2xl">
           <div className="flex items-center gap-2 mb-3">
             <Smartphone className="w-4 h-4 text-primary" />
@@ -123,15 +105,20 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
           )}
         </Card>
 
-        {/* 2. Leitura NFC técnica */}
         <Card className="p-4 rounded-2xl">
           <div className="flex items-center gap-2 mb-3">
             <Radio className="w-4 h-4 text-primary" />
             <h2 className="font-semibold text-sm">2. Leitura NFC técnica</h2>
+            <StatusBadge status={status} />
           </div>
 
-          <Button onClick={handleStartScan} disabled={reading} className="w-full" size="lg">
-            {reading ? (
+          <Button
+            onClick={handleStartScan}
+            disabled={status === "scanning"}
+            className="w-full"
+            size="lg"
+          >
+            {status === "scanning" ? (
               <>
                 <Loader2 className="w-4 h-4 animate-spin" /> Aguardando cartão…
               </>
@@ -142,9 +129,9 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
             )}
           </Button>
 
-          {reading && (
+          {status === "scanning" && (
             <p className="text-xs text-muted-foreground mt-3 text-center">
-              Aproxime o cartão da parte traseira do aparelho.
+              Aproxime o cartão NFC da parte traseira do aparelho.
             </p>
           )}
 
@@ -155,48 +142,58 @@ const NfcDiagnosticScreen = ({ onBack }: Props) => {
             </div>
           )}
 
-          {dump && (
+          {status === "success" && result && (
             <div className="mt-4 space-y-3">
               <div className="flex items-center gap-2 text-success text-xs font-medium">
-                <CheckCircle2 className="w-4 h-4" /> Cartão detectado
+                <CheckCircle2 className="w-4 h-4" /> Cartão detectado com sucesso
               </div>
               <dl className="text-xs space-y-2 bg-slate-100 rounded-lg p-3">
-                <Row label="UID" value={dump.uid} mono />
-                <Row label="Tipo de cartão" value={dump.cardType} />
-                <Row label="Tecnologias" value={dump.technologies.join(", ")} />
-                {dump.atqa && <Row label="ATQA" value={dump.atqa} mono />}
-                {dump.sak && <Row label="SAK" value={dump.sak} mono />}
-                {dump.historicalBytes && (
-                  <Row label="Historical bytes" value={dump.historicalBytes} mono />
+                <Row label="UID" value={result.uid} mono />
+                <Row label="Tecnologias" value={result.tech.join(", ") || "—"} />
+                {result.timestamp && (
+                  <Row
+                    label="Timestamp"
+                    value={new Date(result.timestamp).toLocaleString("pt-BR")}
+                  />
                 )}
-                {dump.maxTransceiveLength !== undefined && (
-                  <Row label="Max transceive" value={`${dump.maxTransceiveLength} bytes`} />
-                )}
-                <Row label="Timestamp" value={new Date(dump.timestamp).toLocaleString("pt-BR")} />
               </dl>
               <p className="text-[10px] text-muted-foreground leading-snug">
-                Dump técnico — saldo não é exibido neste modo. Quando o módulo nativo Android
-                estiver disponível, estes valores virão diretamente do chip via Capacitor.
+                Saldo: <strong>indisponível</strong> nesta versão (mock). A leitura de saldo
+                será adicionada em etapa futura.
               </p>
             </div>
           )}
         </Card>
 
-        {/* 3. Integração nativa */}
         <Card className="p-4 rounded-2xl">
           <div className="flex items-center gap-2 mb-2">
-            <WifiOff className="w-4 h-4 text-muted-foreground" />
+            <Radio className="w-4 h-4 text-muted-foreground" />
             <h2 className="font-semibold text-sm">Integração nativa</h2>
           </div>
           <p className="text-xs text-muted-foreground leading-relaxed">
-            Esta tela está preparada para delegar a leitura a um plugin Capacitor
-            (<code className="font-mono text-[11px]">window.Capacitor.Plugins.NfcReader</code>).
-            Enquanto o módulo não estiver instalado, os valores acima são simulados para
-            permitir o desenvolvimento da interface.
+            Esta tela escuta o evento <code className="font-mono text-[11px]">nfcResult</code>{" "}
+            emitido pelo módulo nativo Android via Capacitor. O frontend não acessa o NFC
+            diretamente — apenas recebe <code className="font-mono text-[11px]">uid</code> e{" "}
+            <code className="font-mono text-[11px]">tech</code> do bridge.
           </p>
         </Card>
       </div>
     </div>
+  );
+};
+
+const StatusBadge = ({ status }: { status: NfcStatus }) => {
+  const map: Record<NfcStatus, { label: string; cls: string }> = {
+    idle: { label: "idle", cls: "bg-slate-200 text-slate-700" },
+    scanning: { label: "scanning", cls: "bg-brand-yellow/30 text-yellow-800" },
+    success: { label: "success", cls: "bg-success/20 text-success" },
+    error: { label: "error", cls: "bg-destructive/15 text-destructive" },
+  };
+  const s = map[status];
+  return (
+    <span className={`ml-auto text-[10px] font-mono uppercase px-2 py-0.5 rounded-full ${s.cls}`}>
+      {s.label}
+    </span>
   );
 };
 
