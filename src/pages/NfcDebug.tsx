@@ -298,6 +298,16 @@ const NfcDebug = () => {
           Simular Evento NFC
         </button>
 
+        <button
+          type="button"
+          onClick={handleExport}
+          className="w-full flex items-center justify-center gap-2 rounded-lg border border-cyan-500 bg-cyan-900/40 px-4 py-3 font-mono text-sm font-bold text-cyan-100 active:scale-[0.98] transition-transform disabled:opacity-40 disabled:pointer-events-none"
+          disabled={!raw && !parsed}
+        >
+          <Download className="w-4 h-4" />
+          Exportar Dados (TXT)
+        </button>
+
         <section className="rounded-lg border border-yellow-500/60 bg-slate-900 p-4">
           <h2 className="font-mono text-sm font-bold text-yellow-300">MIFARE INFO</h2>
           <div className="mt-3 grid grid-cols-2 gap-3 font-mono text-xs">
