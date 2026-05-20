@@ -1,10 +1,23 @@
 import { useEffect, useState } from "react";
-import { Lock, Unlock } from "lucide-react";
+import { Lock, Unlock, Database, Key } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+
+type MifareBlock = {
+  block: number;
+  hex: string;
+};
 
 type AuthResult = {
   sector: number;
   authenticated: boolean;
+  blocks?: MifareBlock[];
+};
+
+const isTrailerBlock = (block: number, sector: number) => {
+  // Sectors 0-31: 4 blocks each, trailer is last (block % 4 === 3)
+  // Sectors 32-39: 16 blocks each, trailer is last (block % 16 === 15)
+  if (sector < 32) return block % 4 === 3;
+  return block % 16 === 15;
 };
 
 type NfcPayload = {
@@ -82,6 +95,7 @@ const NfcDebug = () => {
 
         if (Array.isArray(data.authResults)) {
           console.log("AUTH RESULTS", data.authResults);
+          console.log("BLOCK DUMP", data.authResults);
           setAuthResults(data.authResults);
           setAuthKey((k) => k + 1);
         } else {
@@ -118,22 +132,39 @@ const NfcDebug = () => {
       sectorCount: 16,
       blockCount: 64,
       authResults: [
-        { sector: 0, authenticated: true },
-        { sector: 1, authenticated: true },
+        {
+          sector: 0,
+          authenticated: true,
+          blocks: [
+            { block: 0, hex: "4F 2B 4F A8 BC 08 04 00 62 63 64 65 66 67 68 69" },
+            { block: 1, hex: "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00" },
+            { block: 2, hex: "00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00" },
+            { block: 3, hex: "FF FF FF FF FF FF FF 07 80 69 FF FF FF FF FF FF" },
+          ],
+        },
+        {
+          sector: 1,
+          authenticated: true,
+          blocks: [
+            { block: 4, hex: "A1 22 FF 90 00 14 FF 22 11 00 AB CD EF 01 02 03" },
+            { block: 5, hex: "00 14 FF 22 11 00 AB CD EF 01 02 03 04 05 06 07" },
+            { block: 6, hex: "11 22 33 44 55 66 77 88 99 AA BB CC DD EE FF 00" },
+            { block: 7, hex: "FF FF FF FF FF FF FF 07 80 69 FF FF FF FF FF FF" },
+          ],
+        },
         { sector: 2, authenticated: true },
         { sector: 3, authenticated: false },
         { sector: 4, authenticated: true },
         { sector: 5, authenticated: false },
-        { sector: 6, authenticated: true },
-        { sector: 7, authenticated: true },
-        { sector: 8, authenticated: false },
-        { sector: 9, authenticated: true },
-        { sector: 10, authenticated: false },
-        { sector: 11, authenticated: true },
-        { sector: 12, authenticated: true },
-        { sector: 13, authenticated: true },
-        { sector: 14, authenticated: false },
-        { sector: 15, authenticated: true },
+        {
+          sector: 16,
+          authenticated: true,
+          blocks: [
+            { block: 64, hex: "A1 22 FF 90 00 14 FF 22 11 00 AB CD EF 01 02 03" },
+            { block: 65, hex: "00 14 FF 22 11 00 AB CD EF 01 02 03 04 05 06 07" },
+            { block: 67, hex: "FF FF FF FF FF FF FF 07 80 69 FF FF FF FF FF FF" },
+          ],
+        },
       ],
     };
 
@@ -302,6 +333,98 @@ const NfcDebug = () => {
             </motion.section>
           )}
         </AnimatePresence>
+
+        <AnimatePresence>
+          {authResults && authResults.some((r) => r.blocks && r.blocks.length > 0) && (
+            <motion.section
+              key={`dump-${authKey}`}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -10 }}
+              transition={{ duration: 0.3 }}
+              className="rounded-lg border border-fuchsia-500/60 bg-slate-900 p-4"
+            >
+              <h2 className="font-mono text-sm font-bold text-fuchsia-300 flex items-center gap-2">
+                <Database className="w-4 h-4" />
+                BLOCK DUMP
+                <span className="ml-auto rounded border border-emerald-500 px-1.5 py-0.5 text-[9px] text-emerald-300">
+                  READ OK
+                </span>
+              </h2>
+              <p className="mt-1 font-mono text-[10px] text-slate-400">
+                Dump hexadecimal dos blocos MIFARE autenticados
+              </p>
+
+              <div className="mt-3 space-y-3">
+                {authResults
+                  .filter((r) => r.blocks && r.blocks.length > 0)
+                  .map((result, idx) => (
+                    <motion.div
+                      key={`${authKey}-dump-${result.sector}`}
+                      initial={{ opacity: 0, x: -8 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      transition={{ duration: 0.25, delay: idx * 0.05 }}
+                      className="rounded border border-slate-700 bg-slate-950 overflow-hidden"
+                    >
+                      <div className="flex items-center justify-between border-b border-slate-800 bg-slate-900/60 px-3 py-2 font-mono">
+                        <div className="flex items-center gap-2">
+                          <Key className="w-3.5 h-3.5 text-fuchsia-400" />
+                          <span className="text-xs font-bold text-fuchsia-300">
+                            Sector {result.sector}
+                          </span>
+                        </div>
+                        <span className="text-[10px] text-slate-400">
+                          {result.blocks?.length} blocks
+                        </span>
+                      </div>
+
+                      <div className="divide-y divide-slate-800/60">
+                        {result.blocks!.map((b) => {
+                          const trailer = isTrailerBlock(b.block, result.sector);
+                          return (
+                            <div
+                              key={`${result.sector}-${b.block}`}
+                              className={`px-3 py-2 font-mono ${
+                                trailer ? "bg-yellow-950/20" : ""
+                              }`}
+                            >
+                              <div className="flex items-center justify-between">
+                                <span
+                                  className={`text-[10px] font-bold tracking-wider ${
+                                    trailer ? "text-yellow-300" : "text-cyan-300"
+                                  }`}
+                                >
+                                  Block {b.block}
+                                </span>
+                                <span
+                                  className={`text-[9px] uppercase tracking-wider rounded px-1.5 py-0.5 border ${
+                                    trailer
+                                      ? "border-yellow-500/60 text-yellow-300"
+                                      : "border-slate-700 text-slate-400"
+                                  }`}
+                                >
+                                  {trailer ? "TRAILER" : "DATA"}
+                                </span>
+                              </div>
+                              <div
+                                className={`mt-1 text-[11px] break-all leading-relaxed ${
+                                  trailer ? "text-yellow-200" : "text-emerald-300"
+                                }`}
+                              >
+                                {b.hex}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </motion.div>
+                  ))}
+              </div>
+            </motion.section>
+          )}
+        </AnimatePresence>
+
+
 
         <section className="rounded-lg border border-slate-700 bg-slate-900 p-4">
           <h2 className="font-mono text-sm font-bold text-emerald-300">UID</h2>
