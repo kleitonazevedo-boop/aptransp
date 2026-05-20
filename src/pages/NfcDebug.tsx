@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Lock, Unlock, Database, Key } from "lucide-react";
+import { Lock, Unlock, Database, Key, Download } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 
 type MifareBlock = {
@@ -188,6 +188,76 @@ const NfcDebug = () => {
   const deniedCount = totalSectors - grantedCount;
   const accessPercent = totalSectors > 0 ? Math.round((grantedCount / totalSectors) * 100) : 0;
 
+  const handleExport = async () => {
+    const rawText = formatRaw(raw);
+    const parsedText = parsed ? JSON.stringify(parsed, null, 2) : "Aguardando objeto";
+
+    const content = [
+      "=============================================",
+      "          NFC DEBUG EXPORT — TXT",
+      "=============================================",
+      "",
+      `Gerado em: ${new Date().toLocaleString("pt-BR")}`,
+      `UID: ${uid || "-"}`,
+      `Tech: ${tech.length > 0 ? tech.join(", ") : "-"}`,
+      `Timestamp: ${timestamp ? `${timestamp} (${new Date(timestamp).toISOString()})` : "-"}`,
+      "",
+      "---------------------------------------------",
+      "RAW EVENT",
+      "---------------------------------------------",
+      rawText,
+      "",
+      "---------------------------------------------",
+      "PARSED JSON",
+      "---------------------------------------------",
+      parsedText,
+      "",
+      "=============================================",
+      "                 FIM DO ARQUIVO",
+      "=============================================",
+    ].join("\n");
+
+    const blob = new Blob([content], { type: "text/plain;charset=utf-8" });
+
+    try {
+      const picker = (window as unknown as Record<string, unknown>)
+        .showSaveFilePicker as
+        | ((opts: {
+            suggestedName?: string;
+            types?: Array<{ description: string; accept: Record<string, string[]> }>;
+          }) => Promise<{ createWritable: () => Promise<{ write: (data: Blob) => Promise<void>; close: () => Promise<void> }> }>)
+        | undefined;
+
+      if (picker) {
+        const handle = await picker({
+          suggestedName: `nfc-debug-${Date.now()}.txt`,
+          types: [
+            {
+              description: "Arquivo de texto",
+              accept: { "text/plain": [".txt"] },
+            },
+          ],
+        });
+        const writable = await handle.createWritable();
+        await writable.write(blob);
+        await writable.close();
+      } else {
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = `nfc-debug-${Date.now()}.txt`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } catch (err) {
+      if ((err as Error).name !== "AbortError") {
+        console.error("Erro ao exportar:", err);
+      }
+    }
+  };
+
   const statusLabel =
     status === "waiting" ? "AGUARDANDO" : status === "received" ? "EVENTO RECEBIDO" : "ERRO";
   const statusColor =
@@ -226,6 +296,16 @@ const NfcDebug = () => {
           className="w-full rounded-lg border border-emerald-500 bg-emerald-900 px-4 py-3 font-mono text-sm font-bold text-emerald-100 active:scale-[0.98] transition-transform"
         >
           Simular Evento NFC
+        </button>
+
+        <button
+          type="button"
+          onClick={handleExport}
+          className="w-full flex items-center justify-center gap-2 rounded-lg border border-cyan-500 bg-cyan-900/40 px-4 py-3 font-mono text-sm font-bold text-cyan-100 active:scale-[0.98] transition-transform disabled:opacity-40 disabled:pointer-events-none"
+          disabled={!raw && !parsed}
+        >
+          <Download className="w-4 h-4" />
+          Exportar Dados (TXT)
         </button>
 
         <section className="rounded-lg border border-yellow-500/60 bg-slate-900 p-4">
