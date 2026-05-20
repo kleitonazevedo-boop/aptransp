@@ -15,6 +15,7 @@ interface Props {
 export const SideMenu = ({ onBalance, onMap, onRoute, onAbout, onNfcDiagnostic }: Props) => {
   const [open, setOpen] = useState(false);
   const [devOpen, setDevOpen] = useState(false);
+  const navigate = useNavigate();
 
   const close = () => setOpen(false);
 
