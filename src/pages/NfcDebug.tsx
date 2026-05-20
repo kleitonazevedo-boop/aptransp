@@ -14,6 +14,7 @@ import {
   FileJson,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
+import ForensicReport from "@/components/ForensicReport";
 
 type MifareBlock = {
   block: number;
@@ -118,6 +119,11 @@ const triggerDownload = async (
   filename: string,
   content: string,
   mime = "application/json",
+  labels = {
+    fileCreated: "EXPORT FILE CREATED",
+    shareOpened: "EXPORT SHARE OPENED",
+    error: "EXPORT ERROR",
+  },
 ) => {
   try {
     if (isNativePlatform()) {
@@ -131,7 +137,7 @@ const triggerDownload = async (
         encoding: Encoding.UTF8,
         recursive: true,
       });
-      console.log("EXPORT FILE CREATED", filename);
+      console.log(labels.fileCreated, filename);
 
       const fileInfo = await Filesystem.getUri({
         directory: Directory.Documents,
@@ -144,7 +150,7 @@ const triggerDownload = async (
         url: fileInfo.uri,
         dialogTitle: "Compartilhar dump NFC",
       });
-      console.log("EXPORT SHARE OPENED");
+      console.log(labels.shareOpened);
       return;
     }
 
@@ -158,9 +164,9 @@ const triggerDownload = async (
     a.click();
     document.body.removeChild(a);
     URL.revokeObjectURL(url);
-    console.log("EXPORT FILE CREATED", filename);
+    console.log(labels.fileCreated, filename);
   } catch (error) {
-    console.error("EXPORT ERROR", error);
+    console.error(labels.error, error);
   }
 };
 
@@ -356,6 +362,60 @@ const NfcDebug = () => {
   const deniedCount = totalSectors - grantedCount;
   const accessPercent = totalSectors > 0 ? Math.round((grantedCount / totalSectors) * 100) : 0;
 
+  function buildForensicDumpPayload(snapshot?: Snapshot) {
+    const source = snapshot?.data ?? parsed;
+    const sourceAuth = source?.authResults ?? authResults ?? [];
+    const hexDump = sourceAuth.flatMap((r) =>
+      (r.blocks ?? []).map((b) => ({
+        sector: r.sector,
+        block: b.block,
+        hex: b.hex,
+        isTrailer: isTrailerBlock(b.block, r.sector, b.isTrailer),
+        type: isTrailerBlock(b.block, r.sector, b.isTrailer) ? "trailer" : "data",
+      })),
+    );
+    const validSectors = sourceAuth.filter((r) => r.authenticated).map((r) => r.sector);
+
+    return {
+      uid: snapshot?.uid ?? uid,
+      timestamp: snapshot?.timestamp ?? timestamp ?? Date.now(),
+      authState: {
+        totalSectors: sourceAuth.length,
+        authenticatedSectors: validSectors.length,
+        deniedSectors: sourceAuth.filter((r) => !r.authenticated).map((r) => r.sector),
+        accessPercent: sourceAuth.length > 0 ? Math.round((validSectors.length / sourceAuth.length) * 100) : 0,
+      },
+      validSectors,
+      blocksRead: hexDump.length,
+      blocks: hexDump,
+      diffData: {
+        snapshotA: snapA ? { id: snapA.id, timestamp: snapA.timestamp, uid: snapA.uid } : null,
+        snapshotB: snapB ? { id: snapB.id, timestamp: snapB.timestamp, uid: snapB.uid } : null,
+        changedBlocks: diffEntries.filter((d) => d.changed),
+        unchangedBlocks: diffEntries.filter((d) => !d.changed),
+      },
+      forensicMetadata: {
+        generatedAt: new Date().toISOString(),
+        source: "nfc-debug",
+        exportFormat: "forensic-snapshot-v1",
+        platform: isNativePlatform() ? "capacitor" : "web",
+      },
+      mifareInfo: {
+        mifareType: source?.mifareType ?? mifareType,
+        mifareTypeLabel: mifareTypeLabel(source?.mifareType ?? mifareType),
+        mifareSize: source?.mifareSize ?? mifareSize,
+        mifareSizeLabel: mifareSizeLabel(source?.mifareSize ?? mifareSize),
+        sectorCount: source?.sectorCount ?? sectorCount,
+        blockCount: source?.blockCount ?? blockCount,
+        tech: source?.tech ?? tech,
+      },
+      readOnly: true,
+      authResults: sourceAuth,
+      rawEvent: raw,
+      snapshotData: source,
+    };
+  }
+
   const handleExportTxt = async () => {
     const rawText = formatRaw(raw);
     const parsedText = parsed ? JSON.stringify(parsed, null, 2) : "Aguardando objeto";
@@ -380,31 +440,12 @@ const NfcDebug = () => {
 
   const handleExportJson = async () => {
     if (!parsed) return;
-    const hexDump = (authResults ?? []).flatMap((r) =>
-      (r.blocks ?? []).map((b) => ({
-        sector: r.sector,
-        block: b.block,
-        hex: b.hex,
-        isTrailer: isTrailerBlock(b.block, r.sector, b.isTrailer),
-      })),
-    );
-    const dump = {
-      uid,
-      timestamp: timestamp ?? Date.now(),
-      mifareType,
-      mifareSize,
-      sectorCount,
-      blockCount,
-      tech,
-      authResults: authResults ?? [],
-      hexDump,
-      snapshotData: parsed,
-    };
+    const dump = buildForensicDumpPayload();
     await triggerDownload(`dump_${fileStamp()}.json`, JSON.stringify(dump, null, 2));
     console.log("EXPORT GENERATED");
   };
 
-  const handleSaveSnapshot = () => {
+  const handleSaveSnapshot = async () => {
     if (!parsed) return;
     const snap: Snapshot = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -415,6 +456,18 @@ const NfcDebug = () => {
     const next = [snap, ...snapshots].slice(0, 50);
     setSnapshots(next);
     persistSnapshots(next);
+    console.log("SNAPSHOT SAVED", snap);
+    const snapshotDump = buildForensicDumpPayload(snap);
+    await triggerDownload(
+      `snapshot_${fileStamp()}.json`,
+      JSON.stringify(snapshotDump, null, 2),
+      "application/json",
+      {
+        fileCreated: "SNAPSHOT FILE CREATED",
+        shareOpened: "SNAPSHOT SHARE OPENED",
+        error: "SNAPSHOT EXPORT ERROR",
+      },
+    );
     console.log("SNAPSHOT SAVED", snap);
   };
 
@@ -1027,6 +1080,13 @@ const NfcDebug = () => {
             </ul>
           )}
         </section>
+
+        {/* FORENSIC ANALYZER MODULE */}
+        <ForensicReport
+          parsed={parsed}
+          snapshots={snapshots}
+          diff={snapA && snapB ? diffEntries : null}
+        />
 
         <section className="rounded-lg border border-slate-700 bg-slate-900 p-4">
           <h2 className="font-mono text-sm font-bold text-emerald-300">UID</h2>
