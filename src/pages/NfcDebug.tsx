@@ -375,11 +375,19 @@ const NfcDebug = () => {
       "--- PARSED JSON ---",
       parsedText,
     ].join("\n");
-    triggerDownload(`nfc-debug-${fileStamp()}.txt`, content, "text/plain");
+    await triggerDownload(`nfc-debug-${fileStamp()}.txt`, content, "text/plain");
   };
 
-  const handleExportJson = () => {
+  const handleExportJson = async () => {
     if (!parsed) return;
+    const hexDump = (authResults ?? []).flatMap((r) =>
+      (r.blocks ?? []).map((b) => ({
+        sector: r.sector,
+        block: b.block,
+        hex: b.hex,
+        isTrailer: isTrailerBlock(b.block, r.sector, b.isTrailer),
+      })),
+    );
     const dump = {
       uid,
       timestamp: timestamp ?? Date.now(),
@@ -389,8 +397,10 @@ const NfcDebug = () => {
       blockCount,
       tech,
       authResults: authResults ?? [],
+      hexDump,
+      snapshotData: parsed,
     };
-    triggerDownload(`dump_${fileStamp()}.json`, JSON.stringify(dump, null, 2));
+    await triggerDownload(`dump_${fileStamp()}.json`, JSON.stringify(dump, null, 2));
     console.log("EXPORT GENERATED");
   };
 
