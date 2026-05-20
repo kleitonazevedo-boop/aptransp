@@ -366,23 +366,56 @@ export const extractReadableStrings = (blocks: ParsedBlock[], min = 4): AsciiHit
 export type ValueCandidate = {
   block: number;
   sector: number;
-  kind: "timestamp" | "counter";
+  kind: "timestamp" | "counter" | "value-block" | "balance";
   value: number;
   note: string;
+};
+
+// MIFARE Classic value-block format:
+//  bytes  0..3 : value (LE int32)
+//  bytes  4..7 : ~value
+//  bytes  8..11: value
+//  bytes 12    : addr
+//  bytes 13    : ~addr
+//  bytes 14    : addr
+//  bytes 15    : ~addr
+const isMifareValueBlock = (b: number[]): boolean => {
+  if (b.length < 16) return false;
+  for (let i = 0; i < 4; i++) {
+    if (b[i] !== b[i + 8]) return false;
+    if (((b[i] ^ 0xff) & 0xff) !== b[i + 4]) return false;
+  }
+  const addr = b[12];
+  if (b[14] !== addr) return false;
+  if (((addr ^ 0xff) & 0xff) !== b[13]) return false;
+  if (((addr ^ 0xff) & 0xff) !== b[15]) return false;
+  return true;
 };
 
 export const detectValueCandidates = (blocks: ParsedBlock[]): ValueCandidate[] => {
   const out: ValueCandidate[] = [];
   blocks.forEach((b) => {
     if (b.isTrailer || b.bytes.length < 4) return;
-    // Try first 4 bytes BE and LE as uint32
+
+    // 1) Real MIFARE Value Block (saldo / contador estruturado)
+    if (isMifareValueBlock(b.bytes)) {
+      const raw =
+        (b.bytes[0] | (b.bytes[1] << 8) | (b.bytes[2] << 16) | (b.bytes[3] << 24)) | 0; // signed int32
+      out.push({
+        block: b.block,
+        sector: b.sector,
+        kind: "value-block",
+        value: raw,
+        note: `MIFARE value block (addr=0x${b.bytes[12].toString(16).padStart(2, "0")}) — possível saldo/contador`,
+      });
+    }
+
+    // 2) Timestamp heuristic (uint32 BE/LE em janela plausível)
     const beHead = (b.bytes[0] << 24) | (b.bytes[1] << 16) | (b.bytes[2] << 8) | b.bytes[3];
     const leHead = b.bytes[0] | (b.bytes[1] << 8) | (b.bytes[2] << 16) | (b.bytes[3] << 24);
     const now = Date.now() / 1000;
-    const candidates = [beHead >>> 0, leHead >>> 0];
-    candidates.forEach((v, i) => {
+    [beHead >>> 0, leHead >>> 0].forEach((v, i) => {
       if (v > 946684800 && v < now + 86400) {
-        // 2000-01-01 .. now+1d
         out.push({
           block: b.block,
           sector: b.sector,
@@ -392,22 +425,34 @@ export const detectValueCandidates = (blocks: ParsedBlock[]): ValueCandidate[] =
         });
       }
     });
-    // Counter heuristic: byte[0..1] non-zero, rest zero
+
+    // 3) Contador LE uint16 (saldo bruto, créditos, tickets)
     if (
-      b.bytes.length >= 4 &&
       (b.bytes[0] !== 0 || b.bytes[1] !== 0) &&
       b.bytes.slice(2).every((x) => x === 0 || x === 0xff)
     ) {
+      const v = b.bytes[0] | (b.bytes[1] << 8);
       out.push({
         block: b.block,
         sector: b.sector,
         kind: "counter",
-        value: b.bytes[0] | (b.bytes[1] << 8),
-        note: "Possível contador LE uint16",
+        value: v,
+        note: `Possível contador LE uint16 (raw=${v})`,
       });
     }
   });
   return out;
+};
+
+// ---------- ENTROPY CLASSIFICATION ----------
+
+export type EntropyClass = "EMPTY" | "STRUCTURED" | "MIXED" | "ENCRYPTED";
+
+export const classifyEntropy = (entropy: number, isEmpty: boolean): EntropyClass => {
+  if (isEmpty || entropy < 0.5) return "EMPTY";
+  if (entropy < 3.5) return "STRUCTURED";
+  if (entropy < 6.5) return "MIXED";
+  return "ENCRYPTED";
 };
 
 // ---------- DIFF ----------
