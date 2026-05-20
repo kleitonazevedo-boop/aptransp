@@ -537,9 +537,13 @@ const NfcDebug = () => {
         <section className="rounded-lg border border-cyan-500/60 bg-slate-900 p-4">
           <h2 className="font-mono text-sm font-bold text-cyan-300 flex items-center gap-2">
             <FileJson className="w-4 h-4" /> EXPORT CENTER
+            <span className="ml-auto inline-flex items-center gap-1 rounded border border-emerald-500/70 bg-emerald-900/40 px-2 py-0.5 font-mono text-[9px] font-bold text-emerald-300 tracking-wider">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              EXPORT READY
+            </span>
           </h2>
           <p className="mt-1 font-mono text-[10px] text-slate-400">
-            Exportação forensic para análise externa
+            Exportação forensic — Capacitor Filesystem + Share (Android nativo)
           </p>
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
