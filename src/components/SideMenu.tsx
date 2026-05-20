@@ -1,6 +1,7 @@
 import { useState } from "react";
+import { useNavigate } from "react-router-dom";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
-import { Menu, Wallet, Map, Info, Route, Code2, ChevronDown, Radio } from "lucide-react";
+import { Menu, Wallet, Map, Info, Route, Code2, ChevronDown, Radio, Terminal } from "lucide-react";
 import { Logo } from "./Logo";
 
 interface Props {
@@ -14,6 +15,7 @@ interface Props {
 export const SideMenu = ({ onBalance, onMap, onRoute, onAbout, onNfcDiagnostic }: Props) => {
   const [open, setOpen] = useState(false);
   const [devOpen, setDevOpen] = useState(false);
+  const navigate = useNavigate();
 
   const close = () => setOpen(false);
 
@@ -79,6 +81,15 @@ export const SideMenu = ({ onBalance, onMap, onRoute, onAbout, onNfcDiagnostic }
                 label="NFC Diagnostic Mode"
                 onClick={() => {
                   onNfcDiagnostic();
+                  close();
+                }}
+                small
+              />
+              <MenuItem
+                icon={<Terminal className="w-4 h-4" />}
+                label="NFC Debug"
+                onClick={() => {
+                  navigate("/nfc-debug");
                   close();
                 }}
                 small
