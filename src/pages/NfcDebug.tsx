@@ -95,6 +95,7 @@ const NfcDebug = () => {
 
         if (Array.isArray(data.authResults)) {
           console.log("AUTH RESULTS", data.authResults);
+          console.log("BLOCK DUMP", data.authResults);
           setAuthResults(data.authResults);
           setAuthKey((k) => k + 1);
         } else {
