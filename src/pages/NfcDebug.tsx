@@ -1,14 +1,33 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
-import { Activity, AlertTriangle, ArrowLeft, CheckCircle2, Radio, Zap } from "lucide-react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowLeft,
+  CheckCircle2,
+  Radio,
+  Zap,
+} from "lucide-react";
 
 type ConnStatus = "waiting" | "received" | "error";
 
 interface ParsedNfc {
   uid?: string;
   tech?: string[];
+  timestamp?: number;
   [k: string]: unknown;
 }
+
+const statusMeta: Record<
+  ConnStatus,
+  { label: string; dot: string; text: string }
+> = {
+  waiting: { label: "AGUARDANDO", dot: "bg-yellow-400", text: "text-yellow-300" },
+  received: { label: "EVENTO RECEBIDO", dot: "bg-emerald-400", text: "text-emerald-300" },
+  error: { label: "ERRO", dot: "bg-red-500", text: "text-red-400" },
+};
+
+const shortTech = (t: string) => t.replace(/^android\.nfc\.tech\./, "");
 
 const NfcDebug = () => {
   const [raw, setRaw] = useState<string | null>(null);
@@ -17,25 +36,27 @@ const NfcDebug = () => {
   const [count, setCount] = useState(0);
   const [status, setStatus] = useState<ConnStatus>("waiting");
   const [lastAt, setLastAt] = useState<string | null>(null);
-  const logRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    console.log("[NFC-DEBUG] mount — listener registrado em window 'nfcResult'");
+    console.log("[NFC-DEBUG] mount - listener registrado em window 'nfcResult'");
 
     const handler = (event: Event) => {
       const detail = (event as CustomEvent).detail;
       console.log("[NFC-DEBUG] evento recebido:", detail);
 
-      // Salva RAW exatamente como recebido
       const rawString =
-        typeof detail === "string" ? detail : JSON.stringify(detail, null, 2);
+        typeof detail === "string"
+          ? detail
+          : JSON.stringify(detail, null, 2);
       setRaw(rawString);
       setCount((c) => c + 1);
       setLastAt(new Date().toLocaleTimeString("pt-BR"));
 
       try {
         const data: ParsedNfc =
-          typeof detail === "string" ? JSON.parse(detail) : (detail as ParsedNfc);
+          typeof detail === "string"
+            ? JSON.parse(detail)
+            : (detail as ParsedNfc);
         console.log("[NFC-DEBUG] parsed JSON:", data);
         setParsed(data);
         setError(null);
@@ -51,30 +72,31 @@ const NfcDebug = () => {
 
     window.addEventListener("nfcResult", handler);
     return () => {
-      console.log("[NFC-DEBUG] unmount — listener removido");
+      console.log("[NFC-DEBUG] unmount - listener removido");
       window.removeEventListener("nfcResult", handler);
     };
   }, []);
 
   const simulate = () => {
     const payload = JSON.stringify({
-      uid: "04:A1:B2:C3",
-      tech: ["NfcA", "MifareClassic"],
+      uid: "4F:2B:4F:A8",
+      tech: [
+        "android.nfc.tech.MifareClassic",
+        "android.nfc.tech.NfcA",
+        "android.nfc.tech.NdefFormatable",
+      ],
+      timestamp: Date.now(),
     });
     console.log("[NFC-DEBUG] disparando evento simulado:", payload);
-    window.dispatchEvent(new CustomEvent("nfcResult", { detail: payload }));
+    window.dispatchEvent(
+      new CustomEvent("nfcResult", { detail: payload })
+    );
   };
 
-  const statusMeta: Record<ConnStatus, { label: string; dot: string; text: string }> = {
-    waiting: { label: "AGUARDANDO", dot: "bg-yellow-400", text: "text-yellow-300" },
-    received: { label: "EVENTO RECEBIDO", dot: "bg-emerald-400", text: "text-emerald-300" },
-    error: { label: "ERRO", dot: "bg-red-500", text: "text-red-400" },
-  };
   const sm = statusMeta[status];
 
   return (
     <div className="min-h-screen bg-[#0a0e14] text-emerald-100 font-mono">
-      {/* top bar */}
       <header className="border-b border-emerald-500/20 bg-[#0d1117]/80 backdrop-blur sticky top-0 z-10">
         <div className="max-w-3xl mx-auto px-4 py-3 flex items-center gap-3">
           <Link
@@ -96,15 +118,33 @@ const NfcDebug = () => {
       </header>
 
       <main className="max-w-3xl mx-auto px-4 py-5 space-y-4">
-        {/* status grid */}
         <section className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-          <StatCard icon={<Activity className="w-3.5 h-3.5" />} label="STATUS" value={sm.label} valueClass={sm.text} />
-          <StatCard icon={<Zap className="w-3.5 h-3.5" />} label="EVENTS" value={String(count).padStart(4, "0")} valueClass="text-cyan-300" />
-          <StatCard icon={<CheckCircle2 className="w-3.5 h-3.5" />} label="LAST_AT" value={lastAt ?? "—"} valueClass="text-emerald-300" />
-          <StatCard icon={<AlertTriangle className="w-3.5 h-3.5" />} label="ERRORS" value={error ? "YES" : "NO"} valueClass={error ? "text-red-400" : "text-emerald-300"} />
+          <StatCard
+            icon={<Activity className="w-3.5 h-3.5" />}
+            label="STATUS"
+            value={sm.label}
+            valueClass={sm.text}
+          />
+          <StatCard
+            icon={<Zap className="w-3.5 h-3.5" />}
+            label="EVENTS"
+            value={String(count).padStart(4, "0")}
+            valueClass="text-cyan-300"
+          />
+          <StatCard
+            icon={<CheckCircle2 className="w-3.5 h-3.5" />}
+            label="LAST_AT"
+            value={lastAt ?? "-"}
+            valueClass="text-emerald-300"
+          />
+          <StatCard
+            icon={<AlertTriangle className="w-3.5 h-3.5" />}
+            label="ERRORS"
+            value={error ? "YES" : "NO"}
+            valueClass={error ? "text-red-400" : "text-emerald-300"}
+          />
         </section>
 
-        {/* simulate button */}
         <button
           onClick={simulate}
           className="w-full border border-emerald-500/40 bg-emerald-500/10 hover:bg-emerald-500/20 transition-colors text-emerald-300 text-xs font-bold tracking-widest py-3 rounded-md uppercase flex items-center justify-center gap-2"
@@ -127,7 +167,7 @@ const NfcDebug = () => {
         <div className="grid sm:grid-cols-2 gap-4">
           <Panel title="UID">
             <pre className="text-sm text-yellow-300 break-all">
-              {parsed?.uid ?? "—"}
+              {parsed?.uid ?? "-"}
             </pre>
           </Panel>
           <Panel title="TECH">
@@ -135,15 +175,24 @@ const NfcDebug = () => {
               <ul className="text-xs space-y-1">
                 {parsed.tech.map((t, i) => (
                   <li key={`${t}-${i}`} className="text-emerald-200">
-                    <span className="text-emerald-500">›</span> {t}
+                    <span className="text-emerald-500">{">"}</span>{" "}
+                    {shortTech(t)}
                   </li>
                 ))}
               </ul>
             ) : (
-              <p className="text-xs text-emerald-700">— sem tecnologias —</p>
+              <p className="text-xs text-emerald-700">- sem tecnologias -</p>
             )}
           </Panel>
         </div>
+
+        {typeof parsed?.timestamp === "number" && (
+          <Panel title="TIMESTAMP">
+            <pre className="text-[11px] text-emerald-200 break-all">
+              {parsed.timestamp} ({new Date(parsed.timestamp).toLocaleString("pt-BR")})
+            </pre>
+          </Panel>
+        )}
 
         <Panel title="ERROR" tone={error ? "danger" : "default"}>
           <pre className="text-[11px] whitespace-pre-wrap break-all text-red-400">
@@ -152,9 +201,8 @@ const NfcDebug = () => {
         </Panel>
 
         <p className="text-[10px] text-emerald-700 text-center pt-2 pb-6">
-          Listener: window.addEventListener("nfcResult") · expects STRING JSON via Capacitor bridge
+          Listener: window.addEventListener("nfcResult") - expects STRING JSON via Capacitor bridge
         </p>
-        <div ref={logRef} />
       </main>
     </div>
   );
@@ -176,7 +224,9 @@ const StatCard = ({
       {icon}
       {label}
     </div>
-    <div className={`mt-1 text-xs font-bold ${valueClass ?? "text-emerald-300"}`}>
+    <div
+      className={`mt-1 text-xs font-bold ${valueClass ?? "text-emerald-300"}`}
+    >
       {value}
     </div>
   </div>
