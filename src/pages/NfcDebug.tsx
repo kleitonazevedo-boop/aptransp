@@ -109,16 +109,59 @@ const formatTs = (ts: number) =>
     second: "2-digit",
   });
 
-const triggerDownload = (filename: string, content: string, mime = "application/json") => {
-  const blob = new Blob([content], { type: `${mime};charset=utf-8` });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement("a");
-  a.href = url;
-  a.download = filename;
-  document.body.appendChild(a);
-  a.click();
-  document.body.removeChild(a);
-  URL.revokeObjectURL(url);
+const isNativePlatform = (): boolean => {
+  const w = window as unknown as { Capacitor?: { isNativePlatform?: () => boolean } };
+  return !!w.Capacitor?.isNativePlatform?.();
+};
+
+const triggerDownload = async (
+  filename: string,
+  content: string,
+  mime = "application/json",
+) => {
+  try {
+    if (isNativePlatform()) {
+      const { Filesystem, Directory, Encoding } = await import("@capacitor/filesystem");
+      const { Share } = await import("@capacitor/share");
+
+      await Filesystem.writeFile({
+        path: filename,
+        directory: Directory.Documents,
+        data: content,
+        encoding: Encoding.UTF8,
+        recursive: true,
+      });
+      console.log("EXPORT FILE CREATED", filename);
+
+      const fileInfo = await Filesystem.getUri({
+        directory: Directory.Documents,
+        path: filename,
+      });
+
+      await Share.share({
+        title: "NFC Forensic Dump",
+        text: filename,
+        url: fileInfo.uri,
+        dialogTitle: "Compartilhar dump NFC",
+      });
+      console.log("EXPORT SHARE OPENED");
+      return;
+    }
+
+    // Web fallback
+    const blob = new Blob([content], { type: `${mime};charset=utf-8` });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+    console.log("EXPORT FILE CREATED", filename);
+  } catch (error) {
+    console.error("EXPORT ERROR", error);
+  }
 };
 
 const fileStamp = () => {
@@ -332,11 +375,19 @@ const NfcDebug = () => {
       "--- PARSED JSON ---",
       parsedText,
     ].join("\n");
-    triggerDownload(`nfc-debug-${fileStamp()}.txt`, content, "text/plain");
+    await triggerDownload(`nfc-debug-${fileStamp()}.txt`, content, "text/plain");
   };
 
-  const handleExportJson = () => {
+  const handleExportJson = async () => {
     if (!parsed) return;
+    const hexDump = (authResults ?? []).flatMap((r) =>
+      (r.blocks ?? []).map((b) => ({
+        sector: r.sector,
+        block: b.block,
+        hex: b.hex,
+        isTrailer: isTrailerBlock(b.block, r.sector, b.isTrailer),
+      })),
+    );
     const dump = {
       uid,
       timestamp: timestamp ?? Date.now(),
@@ -346,8 +397,10 @@ const NfcDebug = () => {
       blockCount,
       tech,
       authResults: authResults ?? [],
+      hexDump,
+      snapshotData: parsed,
     };
-    triggerDownload(`dump_${fileStamp()}.json`, JSON.stringify(dump, null, 2));
+    await triggerDownload(`dump_${fileStamp()}.json`, JSON.stringify(dump, null, 2));
     console.log("EXPORT GENERATED");
   };
 
@@ -388,7 +441,7 @@ const NfcDebug = () => {
     ? Math.round((changedCount / diffEntries.length) * 100)
     : 0;
 
-  const handleExportDiff = () => {
+  const handleExportDiff = async () => {
     if (!snapA || !snapB) return;
     const payload = {
       snapshotA: { id: snapA.id, timestamp: snapA.timestamp, uid: snapA.uid },
@@ -396,7 +449,7 @@ const NfcDebug = () => {
       changedBlocks: diffEntries.filter((d) => d.changed),
       unchangedBlocks: diffEntries.filter((d) => !d.changed),
     };
-    triggerDownload(`diff_${fileStamp()}.json`, JSON.stringify(payload, null, 2));
+    await triggerDownload(`diff_${fileStamp()}.json`, JSON.stringify(payload, null, 2));
     console.log("DIFF GENERATED");
   };
 
@@ -484,9 +537,13 @@ const NfcDebug = () => {
         <section className="rounded-lg border border-cyan-500/60 bg-slate-900 p-4">
           <h2 className="font-mono text-sm font-bold text-cyan-300 flex items-center gap-2">
             <FileJson className="w-4 h-4" /> EXPORT CENTER
+            <span className="ml-auto inline-flex items-center gap-1 rounded border border-emerald-500/70 bg-emerald-900/40 px-2 py-0.5 font-mono text-[9px] font-bold text-emerald-300 tracking-wider">
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+              EXPORT READY
+            </span>
           </h2>
           <p className="mt-1 font-mono text-[10px] text-slate-400">
-            Exportação forensic para análise externa
+            Exportação forensic — Capacitor Filesystem + Share (Android nativo)
           </p>
           <div className="mt-3 grid grid-cols-1 sm:grid-cols-2 gap-2">
             <button
