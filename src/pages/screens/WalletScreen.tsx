@@ -97,7 +97,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
     alerts: {
       title: "Alertas",
       bar: "bg-red-500 text-white",
-      body: "bg-purple-200",
+      body: "bg-red-200",
       icon: <Bell className="w-5 h-5" />,
     },
     favorites: {
