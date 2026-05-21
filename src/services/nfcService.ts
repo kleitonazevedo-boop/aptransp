@@ -6,6 +6,14 @@ export interface NfcData {
   uid: string;
   tech: string[];
   timestamp?: number;
+  mifareType?: number;
+  mifareSize?: number;
+  sectorCount?: number;
+  blockCount?: number;
+  authResults?: unknown[];
+  rawBlocks?: unknown[];
+  blocks?: unknown[];
+  readOnly?: boolean;
 }
 
 export type NfcStatus = "idle" | "scanning" | "detected" | "error";
@@ -56,6 +64,14 @@ function parseNfcPayload(raw: unknown): NfcData | null {
       uid,
       tech,
       timestamp: typeof obj.timestamp === "number" ? obj.timestamp : Date.now(),
+      mifareType: typeof obj.mifareType === "number" ? obj.mifareType : undefined,
+      mifareSize: typeof obj.mifareSize === "number" ? obj.mifareSize : undefined,
+      sectorCount: typeof obj.sectorCount === "number" ? obj.sectorCount : undefined,
+      blockCount: typeof obj.blockCount === "number" ? obj.blockCount : undefined,
+      authResults: Array.isArray(obj.authResults) ? obj.authResults : undefined,
+      rawBlocks: Array.isArray(obj.rawBlocks) ? obj.rawBlocks : undefined,
+      blocks: Array.isArray(obj.blocks) ? obj.blocks : undefined,
+      readOnly: obj.readOnly === true,
     };
   } catch (err) {
     console.error("Falha ao parsear payload NFC:", err, raw);
@@ -88,7 +104,13 @@ export function onNfcResult(callback: NfcCallback): UnsubscribeFn {
 
   // 2) Fallback / triggerJSEvent — window CustomEvent("nfcResult", { detail: "<json>" })
   const handler = (e: Event) => {
-    const parsed = parseNfcPayload((e as CustomEvent).detail);
+    const custom = e as CustomEvent;
+    const raw = custom.detail ?? Object.fromEntries(
+      ["uid", "tech", "timestamp", "mifareType", "mifareSize", "sectorCount", "blockCount", "authResults", "blocks", "rawBlocks", "readOnly", "error"]
+        .map((key) => [key, (e as unknown as Record<string, unknown>)[key]])
+        .filter(([, value]) => value !== undefined),
+    );
+    const parsed = parseNfcPayload(raw);
     if (parsed) callback(parsed);
   };
   window.addEventListener("nfcResult", handler);

@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">APTRANSP</string>
+    <string name="title_activity_main">APTRANSP</string>
+    <string name="package_name">app.lovable.b0f28e4795554c3199e588d60bf8193f</string>
+    <string name="custom_url_scheme">app.lovable.b0f28e4795554c3199e588d60bf8193f</string>
+</resources>
