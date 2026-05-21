@@ -8,9 +8,11 @@ export type MifareBlock = {
   block: number;
   hex: string;
   bytes?: number[];
+  ascii?: string;
   isTrailer?: boolean;
   authSuccess?: boolean;
   keyType?: string | null;
+  usedDefaultKey?: boolean;
 };
 
 export type AuthResult = {
@@ -85,10 +87,13 @@ const normalizeHex = (hex: string): string =>
 const normalizeBlock = (b: MifareBlock, fallbackSector?: number): MifareBlock => {
   const sector = typeof b.sector === "number" ? b.sector : fallbackSector ?? sectorOfBlock(b.block);
   const hex = b.hex ? normalizeHex(b.hex) : (b.bytes ?? []).map((x) => x.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+  const bytes = b.bytes?.length ? b.bytes : hexToBytes(hex);
   return {
     ...b,
     sector,
     hex,
+    bytes,
+    ascii: b.ascii ?? bytesToAscii(bytes),
     isTrailer: isTrailerBlock(b.block, sector, b.isTrailer),
   };
 };
@@ -132,6 +137,7 @@ export const normalizeAuthResults = (payload: NfcPayload | null | undefined): Au
       cur.blocks = [...(cur.blocks ?? []), normalizeBlock(b, sector)];
     }
     if (b.authSuccess !== false) cur.authenticated = true;
+    cur.blocks = [...(cur.blocks ?? [])].sort((a, b) => a.block - b.block);
     map.set(sector, cur);
   });
   return Array.from(map.values()).sort((a, b) => a.sector - b.sector);
