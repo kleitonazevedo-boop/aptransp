@@ -310,14 +310,14 @@ const NfcDebug = () => {
   useEffect(() => {
     const handler = (event: Event) => {
       try {
-        const detail = (event as CustomEvent).detail;
+        const detail = extractNfcEventPayload(event);
         console.log("[NFC Debug] event.detail:", detail);
 
         setRaw(detail);
         setError("");
         setStatus("received");
 
-        const data = (detail ?? {}) as NfcPayload;
+        const data = normalizeNfcPayload(detail);
         setParsed(data);
         setUid(typeof data.uid === "string" ? data.uid : "");
         setTech(Array.isArray(data.tech) ? data.tech : []);
@@ -329,7 +329,7 @@ const NfcDebug = () => {
 
         if (Array.isArray(data.authResults)) {
           console.log("AUTH RESULTS", data.authResults);
-          console.log("BLOCK DUMP", data.authResults);
+          console.log("BLOCK DUMP", data.rawBlocks ?? data.blocks ?? []);
           setAuthResults(data.authResults);
           setAuthKey((k) => k + 1);
         } else {
