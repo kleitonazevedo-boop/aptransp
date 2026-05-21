@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import ForensicReport from "@/components/ForensicReport";
-import { getRawBlocks, normalizeAuthResults } from "@/lib/forensic";
+import { getRawBlocks, normalizeAuthResults, sectorOfBlock } from "@/lib/forensic";
 
 type MifareBlock = {
   sector?: number;
@@ -442,7 +442,7 @@ const NfcDebug = () => {
       validSectors,
       blocksRead: hexDump.length,
       rawBlocks: rawBlocks.map((b) => ({
-        sector: b.sector ?? Math.floor(b.block / 4),
+        sector: b.sector ?? sectorOfBlock(b.block),
         block: b.block,
         hex: b.hex,
       })),
@@ -506,11 +506,13 @@ const NfcDebug = () => {
 
   const handleSaveSnapshot = async () => {
     if (!parsed) return;
+    const rawBlocks = getRawBlocks(parsed) as MifareBlock[];
+    const normalizedAuth = normalizeAuthResults(parsed) as AuthResult[];
     const snap: Snapshot = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       timestamp: Date.now(),
       uid: uid || "-",
-      data: { ...parsed, authResults: authResults ?? [] },
+      data: { ...parsed, rawBlocks, blocks: rawBlocks, authResults: normalizedAuth, readOnly: true },
     };
     const next = [snap, ...snapshots].slice(0, 50);
     setSnapshots(next);
