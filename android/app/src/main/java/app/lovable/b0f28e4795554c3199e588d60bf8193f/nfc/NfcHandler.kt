@@ -5,13 +5,21 @@ import android.app.PendingIntent
 import android.content.Intent
 import android.nfc.NfcAdapter
 import android.nfc.Tag
+import android.nfc.TagLostException
 import android.nfc.tech.IsoDep
 import android.nfc.tech.MifareClassic
 import android.nfc.tech.NfcA
 import android.util.Log
+import app.lovable.b0f28e4795554c3199e588d60bf8193f.BuildConfig
 import com.getcapacitor.Bridge
 import org.json.JSONArray
 import org.json.JSONObject
+
+fun ByteArray.toHex(): String {
+    return joinToString("") {
+        "%02X".format(it)
+    }
+}
 
 class NfcHandler(
     private val activity: Activity,
@@ -19,6 +27,44 @@ class NfcHandler(
 ) {
 
     private var nfcAdapter: NfcAdapter? = null
+
+    private val DEFAULT_READ_KEYS = arrayOf(
+        MifareClassic.KEY_DEFAULT,
+        MifareClassic.KEY_MIFARE_APPLICATION_DIRECTORY,
+        MifareClassic.KEY_NFC_FORUM,
+        byteArrayOf(
+            0x00.toByte(),
+            0x00.toByte(),
+            0x00.toByte(),
+            0x00.toByte(),
+            0x00.toByte(),
+            0x00.toByte()
+        ),
+        byteArrayOf(
+            0xB0.toByte(),
+            0xB1.toByte(),
+            0xB2.toByte(),
+            0xB3.toByte(),
+            0xB4.toByte(),
+            0xB5.toByte()
+        ),
+        byteArrayOf(
+            0x4D.toByte(),
+            0x3A.toByte(),
+            0x99.toByte(),
+            0xC3.toByte(),
+            0x51.toByte(),
+            0xDD.toByte()
+        ),
+        byteArrayOf(
+            0x1A.toByte(),
+            0x98.toByte(),
+            0x2C.toByte(),
+            0x7E.toByte(),
+            0x45.toByte(),
+            0x9A.toByte()
+        )
+    )
 
     fun init() {
         nfcAdapter = NfcAdapter.getDefaultAdapter(activity)
@@ -36,7 +82,7 @@ class NfcHandler(
             activity,
             0,
             intent,
-            PendingIntent.FLAG_MUTABLE
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
         )
 
         val techList = arrayOf(
@@ -64,225 +110,532 @@ class NfcHandler(
         val tag: Tag? =
             intent.getParcelableExtra(NfcAdapter.EXTRA_TAG)
 
-        tag?.let {
+        tag?.let { detectedTag ->
 
-            var mifareType: Int? = null
-            var mifareSize: Int? = null
-            var mifareSectorCount: Int? = null
-            var mifareBlockCount: Int? = null
-            var authResultsJson: JSONArray? = null
+            Thread {
 
-            // =========================
-            // MIFARE CLASSIC
-            // =========================
-            val mifare = MifareClassic.get(it)
-            if (mifare != null) {
-                Log.d("MIFARE", "MIFARE DETECTADO")
                 try {
-                    mifare.connect()
-                    mifare.timeout = 5000
-                    mifareType = mifare.type
-                    mifareSize = mifare.size
-                    mifareSectorCount = mifare.sectorCount
-                    mifareBlockCount = mifare.blockCount
 
-                    val authResults = JSONArray()
+                    var mifareType: Int? = null
+                    var mifareSize: Int? = null
+                    var mifareSectorCount: Int? = null
+                    var mifareBlockCount: Int? = null
 
-                    for (sector in 0 until mifare.sectorCount) {
+                    val authResultsArray = JSONArray()
 
-                        var authenticated = false
+                    // 🔥 NOVO
+                    val sectorsArray = JSONArray()
+
+                    // =========================
+                    // MIFARE CLASSIC
+                    // =========================
+
+                    val mifare = MifareClassic.get(detectedTag)
+
+                    if (mifare != null) {
+
+                        if (BuildConfig.DEBUG) {
+                            Log.d("MIFARE", "MIFARE DETECTADO")
+                        }
+
                         try {
-                            authenticated = mifare.authenticateSectorWithKeyA(
-                                sector,
-                                MifareClassic.KEY_DEFAULT
-                            )
 
-                            if (!authenticated) {
-                                authenticated = mifare.authenticateSectorWithKeyB(
-                                    sector,
-                                    MifareClassic.KEY_DEFAULT
-                                )
-                            }
-                        } catch (e: Exception) {
-                            Log.e("MIFARE_AUTH", "Erro ao autenticar setor $sector", e)
-                        }
+                            mifare.connect()
+                            mifare.timeout = 8000
 
-                        Log.d(
-                            "MIFARE_AUTH",
-                            "Sector $sector authenticated=$authenticated"
-                        )
+                            mifareType = mifare.type
+                            mifareSize = mifare.size
+                            mifareSectorCount = mifare.sectorCount
+                            mifareBlockCount = mifare.blockCount
 
-                        val sectorJson = JSONObject().apply {
-                            put("sector", sector)
-                            put("authenticated", authenticated)
-                        }
+                            val startTime = System.currentTimeMillis()
 
-                        if (authenticated) {
-                            // =========================
-                            // LEITURA HEX
-                            // =========================
-                            val blockDataArray = JSONArray()
-                            val startBlock = mifare.sectorToBlock(sector)
-                            val blockCountInSector = mifare.getBlockCountInSector(sector)
+                            var sectorsRead = 0
 
-                            for (i in 0 until blockCountInSector) {
-                                val blockIndex = startBlock + i
-                                try {
-                                    val data = mifare.readBlock(blockIndex)
-                                    val hex = data.joinToString(" ") {
-                                        "%02X".format(it)
-                                    }
+                            for (sector in 0 until mifare.sectorCount) {
 
+                                if (BuildConfig.DEBUG) {
                                     Log.d(
-                                        "MIFARE_READ",
-                                        "Sector $sector Block $blockIndex"
+                                        "NFC",
+                                        "READING SECTOR $sector"
                                     )
-                                    Log.d(
-                                        "MIFARE_BLOCK",
-                                        "Sector $sector Block $blockIndex -> $hex"
-                                    )
+                                }
 
-                                    val isTrailer = i == blockCountInSector - 1
+                                var authenticated = false
+                                var usedKey: String? = null
+                                var usedKeyHex: String? = null
 
-                                    val blockJson = JSONObject().apply {
-                                        put("block", blockIndex)
-                                        put("hex", hex)
-                                        put("isTrailer", isTrailer)
-                                    }
-                                    blockDataArray.put(blockJson)
-                                    Thread.sleep(10)
-                                } catch (e: android.nfc.TagLostException) {
-                                    Log.e(
-                                        "MIFARE",
-                                        "TAG LOST",
-                                        e
-                                    )
+                                // =========================
+                                // AUTH MULTI-KEY
+                                // =========================
+
+                                for (key in DEFAULT_READ_KEYS) {
+
                                     try {
-                                        mifare.close()
-                                        Thread.sleep(100)
-                                        mifare.connect()
-                                        mifare.timeout = 5000
-                                    } catch (reconnectError: Exception) {
-                                        Log.e(
-                                            "MIFARE",
-                                            "RECONNECT FAILED",
-                                            reconnectError
-                                        )
+
+                                        val keyHex = key.toHex()
+
+                                        // KEY A
+
+                                        if (
+                                            mifare.authenticateSectorWithKeyA(
+                                                sector,
+                                                key
+                                            )
+                                        ) {
+
+                                            authenticated = true
+                                            usedKey = "A"
+                                            usedKeyHex = keyHex
+
+                                            if (BuildConfig.DEBUG) {
+                                                Log.d(
+                                                    "NFC",
+                                                    "AUTH OK sector=$sector key=$keyHex (A)"
+                                                )
+                                            }
+
+                                            authResultsArray.put(
+                                                JSONObject().apply {
+                                                    put("sector", sector)
+                                                    put("authenticated", true)
+                                                    put("keyType", "A")
+                                                    put("keyUsed", keyHex)
+                                                }
+                                            )
+
+                                            break
+
+                                        } else {
+
+                                            if (BuildConfig.DEBUG) {
+                                                Log.e(
+                                                    "NFC",
+                                                    "AUTH FAIL sector=$sector key=$keyHex (A)"
+                                                )
+                                            }
+                                        }
+
+                                        // KEY B
+
+                                        if (
+                                            mifare.authenticateSectorWithKeyB(
+                                                sector,
+                                                key
+                                            )
+                                        ) {
+
+                                            authenticated = true
+                                            usedKey = "B"
+                                            usedKeyHex = keyHex
+
+                                            if (BuildConfig.DEBUG) {
+                                                Log.d(
+                                                    "NFC",
+                                                    "AUTH OK sector=$sector key=$keyHex (B)"
+                                                )
+                                            }
+
+                                            authResultsArray.put(
+                                                JSONObject().apply {
+                                                    put("sector", sector)
+                                                    put("authenticated", true)
+                                                    put("keyType", "B")
+                                                    put("keyUsed", keyHex)
+                                                }
+                                            )
+
+                                            break
+
+                                        } else {
+
+                                            if (BuildConfig.DEBUG) {
+                                                Log.e(
+                                                    "NFC",
+                                                    "AUTH FAIL sector=$sector key=$keyHex (B)"
+                                                )
+                                            }
+                                        }
+
+                                    } catch (_: Exception) {
                                     }
-                                    continue
-                                } catch (e: Exception) {
-                                    Log.e(
-                                        "MIFARE",
-                                        "BLOCK ERROR",
-                                        e
+                                }
+
+                                // =========================
+                                // AUTH FAIL
+                                // =========================
+
+                                if (!authenticated) {
+
+                                    authResultsArray.put(
+                                        JSONObject().apply {
+                                            put("sector", sector)
+                                            put("authenticated", false)
+                                            put("keyUsed", JSONObject.NULL)
+                                            put(
+                                                "error",
+                                                "Authentication failed"
+                                            )
+                                        }
                                     )
+
                                     continue
                                 }
-                            }
-                            sectorJson.put("blocks", blockDataArray)
-                        }
 
-                        authResults.put(sectorJson)
+                                sectorsRead++
+
+                                // =========================
+                                // READ BLOCKS
+                                // =========================
+
+                                val blockDataArray = JSONArray()
+
+                                val startBlock =
+                                    mifare.sectorToBlock(sector)
+
+                                val blockCountInSector =
+                                    mifare.getBlockCountInSector(sector)
+
+                                for (i in 0 until blockCountInSector) {
+
+                                    val blockIndex = startBlock + i
+
+                                    try {
+
+                                        val data =
+                                            mifare.readBlock(blockIndex)
+
+                                        val hex = data.toHex()
+
+                                        if (BuildConfig.DEBUG) {
+
+                                            Log.d(
+                                                "NFC",
+                                                "READ OK sector=$sector block=$blockIndex data=$hex"
+                                            )
+                                        }
+
+                                        val isTrailer =
+                                            i == blockCountInSector - 1
+
+                                        val ascii =
+                                            String(data).replace(
+                                                Regex("[^\\x20-\\x7E]"),
+                                                "."
+                                            )
+
+                                        val isEmpty =
+                                            data.all {
+                                                it == 0.toByte()
+                                            }
+
+                                        val blockJson =
+                                            JSONObject().apply {
+
+                                                put(
+                                                    "sector",
+                                                    sector
+                                                )
+
+                                                put(
+                                                    "block",
+                                                    blockIndex
+                                                )
+
+                                                put(
+                                                    "hex",
+                                                    hex
+                                                )
+
+                                                put(
+                                                    "ascii",
+                                                    ascii
+                                                )
+
+                                                put(
+                                                    "isTrailer",
+                                                    isTrailer
+                                                )
+
+                                                put(
+                                                    "isEmpty",
+                                                    isEmpty
+                                                )
+                                            }
+
+                                        // 🔥 AGORA SALVA REALMENTE
+                                        blockDataArray.put(blockJson)
+
+                                        Thread.sleep(10)
+
+                                    } catch (e: TagLostException) {
+
+                                        Log.e(
+                                            "MIFARE",
+                                            "TAG LOST",
+                                            e
+                                        )
+
+                                        try {
+
+                                            mifare.close()
+
+                                            Thread.sleep(100)
+
+                                            mifare.connect()
+
+                                            mifare.timeout = 8000
+
+                                        } catch (reconnectError: Exception) {
+
+                                            Log.e(
+                                                "MIFARE",
+                                                "RECONNECT FAILED",
+                                                reconnectError
+                                            )
+                                        }
+
+                                        continue
+
+                                    } catch (e: Exception) {
+
+                                        if (BuildConfig.DEBUG) {
+
+                                            Log.e(
+                                                "NFC",
+                                                "READ FAIL sector=$sector block=$blockIndex error=${e.message}"
+                                            )
+                                        }
+
+                                        continue
+                                    }
+                                }
+
+                                // =========================
+                                // SAVE SECTOR
+                                // =========================
+
+                                val sectorJson =
+                                    JSONObject().apply {
+
+                                        put(
+                                            "sector",
+                                            sector
+                                        )
+
+                                        put(
+                                            "authenticated",
+                                            true
+                                        )
+
+                                        put(
+                                            "keyType",
+                                            usedKey ?: JSONObject.NULL
+                                        )
+
+                                        put(
+                                            "keyUsed",
+                                            usedKeyHex ?: JSONObject.NULL
+                                        )
+
+                                        put(
+                                            "blocks",
+                                            blockDataArray
+                                        )
+                                    }
+
+                                // 🔥 CORREÇÃO PRINCIPAL
+                                sectorsArray.put(sectorJson)
+                            }
+
+                            if (BuildConfig.DEBUG) {
+
+                                val totalTime =
+                                    System.currentTimeMillis() - startTime
+
+                                Log.d(
+                                    "NFC",
+                                    "TOTAL READ TIME = $totalTime ms"
+                                )
+
+                                Log.d(
+                                    "NFC",
+                                    "SECTORS READ = $sectorsRead"
+                                )
+
+                                Log.d(
+                                    "MIFARE",
+                                    "TYPE: $mifareType"
+                                )
+
+                                Log.d(
+                                    "MIFARE",
+                                    "SIZE: $mifareSize"
+                                )
+
+                                Log.d(
+                                    "MIFARE",
+                                    "SECTORS: $mifareSectorCount"
+                                )
+
+                                Log.d(
+                                    "MIFARE",
+                                    "BLOCKS: $mifareBlockCount"
+                                )
+                            }
+
+                        } catch (e: Exception) {
+
+                            Log.e(
+                                "MIFARE",
+                                "Erro ao conectar Mifare: ${e.message}"
+                            )
+
+                        } finally {
+
+                            try {
+                                mifare.close()
+                            } catch (_: Exception) {
+                            }
+                        }
                     }
 
-                    authResultsJson = authResults
+                    // =========================
+                    // UID
+                    // =========================
 
-                    Log.d("MIFARE", "TYPE: $mifareType")
-                    Log.d("MIFARE", "SIZE: $mifareSize")
-                    Log.d("MIFARE", "SECTORS: $mifareSectorCount")
-                    Log.d("MIFARE", "BLOCKS: $mifareBlockCount")
-                    
-                    mifare.close()
+                    val uid = detectedTag.id.toHex()
+
+                    // =========================
+                    // TECH ARRAY
+                    // =========================
+
+                    val techArray = JSONArray()
+
+                    detectedTag.techList.forEach { tech ->
+                        techArray.put(tech)
+                    }
+
+                    if (BuildConfig.DEBUG) {
+
+                        Log.d(
+                            "NFC_DEBUG",
+                            "TAG DETECTADA"
+                        )
+
+                        Log.d(
+                            "NFC_DEBUG",
+                            "UID GERADO: $uid"
+                        )
+
+                        Log.d(
+                            "NFC_DEBUG",
+                            "UID: $uid"
+                        )
+                    }
+
+                    // =========================
+                    // JSON FINAL
+                    // =========================
+
+                    val json = JSONObject().apply {
+
+                        put("uid", uid)
+
+                        put("tech", techArray)
+
+                        put(
+                            "timestamp",
+                            System.currentTimeMillis()
+                        )
+
+                        put(
+                            "mifareType",
+                            mifareType ?: JSONObject.NULL
+                        )
+
+                        put(
+                            "mifareSize",
+                            mifareSize ?: JSONObject.NULL
+                        )
+
+                        put(
+                            "sectorCount",
+                            mifareSectorCount ?: JSONObject.NULL
+                        )
+
+                        put(
+                            "blockCount",
+                            mifareBlockCount ?: JSONObject.NULL
+                        )
+
+                        put(
+                            "authResults",
+                            authResultsArray
+                        )
+
+                        // 🔥 NOVO
+                        put(
+                            "sectors",
+                            sectorsArray
+                        )
+                    }
+
+                    if (BuildConfig.DEBUG) {
+
+                        Log.d(
+                            "NFC_DEBUG",
+                            "🔥 VOU ENVIAR PARA WEBVIEW"
+                        )
+
+                        Log.d(
+                            "NFC_DEBUG",
+                            "Enviando para React: $json"
+                        )
+                    }
+
+                    // =========================
+                    // UI THREAD
+                    // =========================
+
+                    bridge.webView.post {
+
+                        if (BuildConfig.DEBUG) {
+
+                            Log.d(
+                                "NFC_DEBUG",
+                                "UI THREAD OK"
+                            )
+                        }
+
+                        val safeJson =
+                            JSONObject.quote(json.toString())
+
+                        bridge.triggerJSEvent(
+                            "nfcResult",
+                            "window",
+                            "JSON.parse($safeJson)"
+                        )
+                    }
+
+                    if (BuildConfig.DEBUG) {
+
+                        Log.d(
+                            "NFC_DEBUG",
+                            "🔥 ENVIO CONCLUÍDO"
+                        )
+                    }
+
                 } catch (e: Exception) {
-                    Log.e("MIFARE", "Erro ao conectar Mifare: ${e.message}")
+
+                    Log.e(
+                        "NFC_THREAD",
+                        "ERRO",
+                        e
+                    )
                 }
-            }
 
-            // =========================
-            // UID
-            // =========================
-
-            val uid = it.id.joinToString(":") { b ->
-                "%02X".format(b)
-            }
-
-            // =========================
-            // TECH ARRAY
-            // =========================
-
-            val techArray = JSONArray()
-
-            it.techList.forEach { tech ->
-                techArray.put(tech)
-            }
-
-            // =========================
-            // LOGS
-            // =========================
-
-            Log.d("NFC_DEBUG", "TAG DETECTADA")
-            Log.d("NFC_DEBUG", "UID GERADO: $uid")
-            Log.d("NFC_DEBUG", "UID: $uid")
-
-            // =========================
-            // JSON FINAL
-            // =========================
-
-            val json = JSONObject().apply {
-
-                put("uid", uid)
-
-                put("tech", techArray)
-
-                put("timestamp", System.currentTimeMillis())
-
-                // =========================
-                // MIFARE INFO
-                // =========================
-
-                put("mifareType", mifareType ?: JSONObject.NULL)
-
-                put("mifareSize", mifareSize ?: JSONObject.NULL)
-
-                put("sectorCount", mifareSectorCount ?: JSONObject.NULL)
-
-                put("blockCount", mifareBlockCount ?: JSONObject.NULL)
-
-                put("authResults", authResultsJson ?: JSONObject.NULL)
-            }
-
-            Log.d(
-                "NFC_DEBUG",
-                "🔥 VOU ENVIAR PARA WEBVIEW"
-            )
-
-            Log.d(
-                "NFC_DEBUG",
-                "Enviando para React: ${json}"
-            )
-
-            // =========================
-            // UI THREAD
-            // =========================
-
-            bridge.webView.post {
-
-                Log.d(
-                    "NFC_DEBUG",
-                    "UI THREAD OK"
-                )
-
-                bridge.triggerJSEvent(
-                    "nfcResult",
-                    "window",
-                    "{ detail: ${json.toString()} }"
-                )
-            }
-
-            Log.d(
-                "NFC_DEBUG",
-                "🔥 ENVIO CONCLUÍDO"
-            )
+            }.start()
         }
     }
 }
