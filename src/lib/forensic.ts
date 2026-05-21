@@ -263,7 +263,7 @@ export const analyzeVariability = (snapshots: Snapshot[]): VariableBlockRow[] =>
     { values: Set<string>; sector: number; isTrailer: boolean; total: number }
   >();
   snapshots.forEach((snap) => {
-    (snap.data.authResults ?? []).forEach((r) => {
+    normalizeAuthResults(snap.data).forEach((r) => {
       (r.blocks ?? []).forEach((b) => {
         const cur = seen.get(b.block) ?? {
           values: new Set<string>(),
@@ -314,7 +314,7 @@ export const analyzeSecurity = (
   payload: NfcPayload | null | undefined,
   blocks: ParsedBlock[],
 ): SecurityAnalysis => {
-  const authResults = payload?.authResults ?? [];
+  const authResults = normalizeAuthResults(payload);
   const trailers = blocks.filter((b) => b.isTrailer).map(analyzeTrailer).filter(Boolean) as TrailerAnalysis[];
   const openSectors = authResults.filter((r) => r.authenticated).map((r) => r.sector);
   const defaultKeySectors = trailers
@@ -525,7 +525,7 @@ export type DiffEntry = {
 
 const buildBlockMap = (snap: Snapshot) => {
   const m = new Map<number, { hex: string; sector: number; isTrailer: boolean }>();
-  (snap.data.authResults ?? []).forEach((r) =>
+  normalizeAuthResults(snap.data).forEach((r) =>
     (r.blocks ?? []).forEach((b) =>
       m.set(b.block, {
         hex: b.hex,
@@ -596,6 +596,7 @@ export const buildForensicReport = async (
   snapshots: Snapshot[],
   diff: DiffEntry[] | null,
 ): Promise<ForensicReport> => {
+  const authResults = normalizeAuthResults(payload);
   const blocks = parseDump(payload);
   const trailers = blocks.map(analyzeTrailer).filter(Boolean) as TrailerAnalysis[];
   const security = analyzeSecurity(payload, blocks);
@@ -638,7 +639,7 @@ export const buildForensicReport = async (
     variability,
     snapshotsCount: snapshots.length,
     diff,
-    authResults: payload?.authResults ?? [],
+    authResults,
     readOnly: true,
   };
 };
