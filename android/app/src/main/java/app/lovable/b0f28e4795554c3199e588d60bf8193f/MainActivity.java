@@ -99,7 +99,6 @@ public class MainActivity extends BridgeActivity {
             payload.put("readOnly", true);
             payload.put("rawBlocks", rawBlocks);
             payload.put("blocks", allBlocks);
-            payload.put("blocksRead", 0);
             payload.put("authResults", authResults);
 
             if (mifare == null) {
@@ -140,7 +139,7 @@ public class MainActivity extends BridgeActivity {
                         block.put("keyType", keyType);
                         block.put("usedDefaultKey", auth.optBoolean("usedDefaultKey", true));
                         blocks.put(block);
-                        allBlocks.put(new JSONObject(block.toString()));
+                        allBlocks.put(block);
 
                         JSONObject raw = new JSONObject();
                         raw.put("sector", sector);
@@ -164,6 +163,7 @@ public class MainActivity extends BridgeActivity {
                     }
                 }
             }
+            payload.put("blocksRead", allBlocks.length());
         } catch (Exception error) {
             try {
                 payload.put("error", error.getMessage());
