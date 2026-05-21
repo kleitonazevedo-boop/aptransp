@@ -6,6 +6,7 @@ export interface NfcData {
   uid: string;
   tech: string[];
   timestamp?: number;
+  blocksRead?: number;
   mifareType?: number;
   mifareSize?: number;
   sectorCount?: number;
@@ -64,6 +65,7 @@ function parseNfcPayload(raw: unknown): NfcData | null {
       uid,
       tech,
       timestamp: typeof obj.timestamp === "number" ? obj.timestamp : Date.now(),
+      blocksRead: typeof obj.blocksRead === "number" ? obj.blocksRead : undefined,
       mifareType: typeof obj.mifareType === "number" ? obj.mifareType : undefined,
       mifareSize: typeof obj.mifareSize === "number" ? obj.mifareSize : undefined,
       sectorCount: typeof obj.sectorCount === "number" ? obj.sectorCount : undefined,
@@ -106,7 +108,7 @@ export function onNfcResult(callback: NfcCallback): UnsubscribeFn {
   const handler = (e: Event) => {
     const custom = e as CustomEvent;
     const raw = custom.detail ?? Object.fromEntries(
-      ["uid", "tech", "timestamp", "mifareType", "mifareSize", "sectorCount", "blockCount", "authResults", "blocks", "rawBlocks", "readOnly", "error"]
+      ["uid", "tech", "timestamp", "blocksRead", "mifareType", "mifareSize", "sectorCount", "blockCount", "authResults", "blocks", "rawBlocks", "readOnly", "error"]
         .map((key) => [key, (e as unknown as Record<string, unknown>)[key]])
         .filter(([, value]) => value !== undefined),
     );

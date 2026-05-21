@@ -22,6 +22,7 @@ type MifareBlock = {
   block: number;
   hex: string;
   bytes?: number[];
+  ascii?: string;
   isTrailer?: boolean;
   authSuccess?: boolean;
   keyType?: string | null;
@@ -46,6 +47,7 @@ type NfcPayload = {
   uid?: string;
   tech?: string[];
   timestamp?: number;
+  blocksRead?: number;
   mifareType?: number;
   mifareSize?: number;
   sectorCount?: number;
@@ -76,6 +78,7 @@ const extractNfcEventPayload = (event: Event): unknown => {
     "uid",
     "tech",
     "timestamp",
+    "blocksRead",
     "mifareType",
     "mifareSize",
     "sectorCount",
@@ -105,6 +108,34 @@ const normalizeNfcPayload = (value: unknown): NfcPayload => {
     authResults,
     readOnly: true,
   };
+};
+
+const serializeBlock = (block: MifareBlock, fallbackSector?: number): MifareBlock => {
+  const sector = typeof block.sector === "number" ? block.sector : fallbackSector ?? sectorOfBlock(block.block);
+  const bytes = block.bytes?.length ? block.bytes : block.hex.match(/[0-9a-fA-F]{2}/g)?.map((byte) => parseInt(byte, 16)) ?? [];
+  const ascii = block.ascii ?? bytes.map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : ".")).join("");
+  const trailer = isTrailerBlock(block.block, sector, block.isTrailer);
+  return {
+    sector,
+    block: block.block,
+    hex: block.hex,
+    bytes,
+    ascii,
+    isTrailer: trailer,
+    authSuccess: block.authSuccess,
+    keyType: block.keyType ?? null,
+    usedDefaultKey: block.usedDefaultKey,
+  };
+};
+
+const buildPersistentAuthResults = (payload: NfcPayload | null | undefined): AuthResult[] => {
+  const normalized = normalizeAuthResults(payload) as AuthResult[];
+  return normalized.map((result) => ({
+    ...result,
+    keyType: result.keyType ?? null,
+    usedDefaultKey: !!result.usedDefaultKey,
+    blocks: (result.blocks ?? []).map((block) => serializeBlock(block, result.sector)),
+  }));
 };
 
 const mifareTypeLabel = (type?: number) => {
@@ -414,20 +445,18 @@ const NfcDebug = () => {
 
   function buildForensicDumpPayload(snapshot?: Snapshot) {
     const source = snapshot?.data ?? parsed;
-    const sourceAuth = normalizeAuthResults(source) as AuthResult[];
-    const rawBlocks = getRawBlocks(source) as MifareBlock[];
-    const hexDump = sourceAuth.flatMap((r) =>
+    const sourceAuth = buildPersistentAuthResults(source);
+    const allBlocks = sourceAuth.flatMap((r) =>
       (r.blocks ?? []).map((b) => ({
-        sector: r.sector,
-        block: b.block,
-        hex: b.hex,
-        bytes: b.bytes ?? b.hex.match(/[0-9a-fA-F]{2}/g)?.map((byte) => parseInt(byte, 16)) ?? [],
-        isTrailer: isTrailerBlock(b.block, r.sector, b.isTrailer),
+        ...serializeBlock(b, r.sector),
         type: isTrailerBlock(b.block, r.sector, b.isTrailer) ? "trailer" : "data",
         authSuccess: b.authSuccess ?? r.authenticated,
         keyType: b.keyType ?? r.keyType ?? null,
+        usedDefaultKey: b.usedDefaultKey ?? r.usedDefaultKey,
       })),
     );
+    const rawBlocks = (getRawBlocks(source) as MifareBlock[]).map((b) => serializeBlock(b));
+    const exportRawBlocks = rawBlocks.length > 0 ? rawBlocks : allBlocks;
     const validSectors = sourceAuth.filter((r) => r.authenticated).map((r) => r.sector);
 
     return {
@@ -440,13 +469,9 @@ const NfcDebug = () => {
         accessPercent: sourceAuth.length > 0 ? Math.round((validSectors.length / sourceAuth.length) * 100) : 0,
       },
       validSectors,
-      blocksRead: hexDump.length,
-      rawBlocks: rawBlocks.map((b) => ({
-        sector: b.sector ?? sectorOfBlock(b.block),
-        block: b.block,
-        hex: b.hex,
-      })),
-      blocks: hexDump,
+      blocksRead: allBlocks.length,
+      rawBlocks: exportRawBlocks,
+      blocks: allBlocks,
       diffData: {
         snapshotA: snapA ? { id: snapA.id, timestamp: snapA.timestamp, uid: snapA.uid } : null,
         snapshotB: snapB ? { id: snapB.id, timestamp: snapB.timestamp, uid: snapB.uid } : null,
@@ -506,13 +531,15 @@ const NfcDebug = () => {
 
   const handleSaveSnapshot = async () => {
     if (!parsed) return;
-    const rawBlocks = getRawBlocks(parsed) as MifareBlock[];
-    const normalizedAuth = normalizeAuthResults(parsed) as AuthResult[];
+    const normalizedAuth = buildPersistentAuthResults(parsed);
+    const allBlocks = normalizedAuth.flatMap((r) => (r.blocks ?? []).map((b) => serializeBlock(b, r.sector)));
+    const rawBlocks = (getRawBlocks(parsed) as MifareBlock[]).map((b) => serializeBlock(b));
+    const snapshotBlocks = allBlocks.length > 0 ? allBlocks : rawBlocks;
     const snap: Snapshot = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       timestamp: Date.now(),
       uid: uid || "-",
-      data: { ...parsed, rawBlocks, blocks: rawBlocks, authResults: normalizedAuth, readOnly: true },
+      data: { ...parsed, blocksRead: snapshotBlocks.length, rawBlocks: snapshotBlocks, blocks: snapshotBlocks, authResults: normalizedAuth, readOnly: true },
     };
     const next = [snap, ...snapshots].slice(0, 50);
     setSnapshots(next);
