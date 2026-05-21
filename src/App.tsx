@@ -16,7 +16,12 @@ const App = () => {
   // e republica como "nfc:update" para que qualquer tela/contexto consuma.
   useEffect(() => {
     const handler = (event: Event) => {
-      const raw = (event as CustomEvent).detail;
+      const custom = event as CustomEvent;
+      const raw = custom.detail ?? Object.fromEntries(
+        ["uid", "tech", "timestamp", "mifareType", "mifareSize", "sectorCount", "blockCount", "authResults", "blocks", "rawBlocks", "readOnly", "error"]
+          .map((key) => [key, (event as unknown as Record<string, unknown>)[key]])
+          .filter(([, value]) => value !== undefined),
+      );
       // Android envia via triggerJSEvent como STRING JSON — fazer parse defensivo
       let data: NfcData | unknown = raw;
       try {
