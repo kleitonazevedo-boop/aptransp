@@ -22,6 +22,7 @@ type MifareBlock = {
   block: number;
   hex: string;
   bytes?: number[];
+  ascii?: string;
   isTrailer?: boolean;
   authSuccess?: boolean;
   keyType?: string | null;
@@ -105,6 +106,34 @@ const normalizeNfcPayload = (value: unknown): NfcPayload => {
     authResults,
     readOnly: true,
   };
+};
+
+const serializeBlock = (block: MifareBlock, fallbackSector?: number): MifareBlock => {
+  const sector = typeof block.sector === "number" ? block.sector : fallbackSector ?? sectorOfBlock(block.block);
+  const bytes = block.bytes?.length ? block.bytes : block.hex.match(/[0-9a-fA-F]{2}/g)?.map((byte) => parseInt(byte, 16)) ?? [];
+  const ascii = block.ascii ?? bytes.map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : ".")).join("");
+  const trailer = isTrailerBlock(block.block, sector, block.isTrailer);
+  return {
+    sector,
+    block: block.block,
+    hex: block.hex,
+    bytes,
+    ascii,
+    isTrailer: trailer,
+    authSuccess: block.authSuccess,
+    keyType: block.keyType ?? null,
+    usedDefaultKey: block.usedDefaultKey,
+  };
+};
+
+const buildPersistentAuthResults = (payload: NfcPayload | null | undefined): AuthResult[] => {
+  const normalized = normalizeAuthResults(payload) as AuthResult[];
+  return normalized.map((result) => ({
+    ...result,
+    keyType: result.keyType ?? null,
+    usedDefaultKey: !!result.usedDefaultKey,
+    blocks: (result.blocks ?? []).map((block) => serializeBlock(block, result.sector)),
+  }));
 };
 
 const mifareTypeLabel = (type?: number) => {
