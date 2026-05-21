@@ -90,6 +90,7 @@ public class MainActivity extends BridgeActivity {
         JSONObject payload = new JSONObject();
         JSONArray authResults = new JSONArray();
         JSONArray rawBlocks = new JSONArray();
+        JSONArray allBlocks = new JSONArray();
         MifareClassic mifare = MifareClassic.get(tag);
         try {
             payload.put("uid", bytesToHex(tag.getId(), ":"));
@@ -97,6 +98,8 @@ public class MainActivity extends BridgeActivity {
             payload.put("timestamp", System.currentTimeMillis());
             payload.put("readOnly", true);
             payload.put("rawBlocks", rawBlocks);
+            payload.put("blocks", allBlocks);
+            payload.put("blocksRead", 0);
             payload.put("authResults", authResults);
 
             if (mifare == null) {
@@ -131,17 +134,22 @@ public class MainActivity extends BridgeActivity {
                         block.put("block", blockIndex);
                         block.put("hex", bytesToHex(blockBytes, " "));
                         block.put("bytes", bytesToJsonArray(blockBytes));
+                        block.put("ascii", bytesToAscii(blockBytes));
                         block.put("isTrailer", trailer);
                         block.put("authSuccess", true);
                         block.put("keyType", keyType);
                         block.put("usedDefaultKey", auth.optBoolean("usedDefaultKey", true));
                         blocks.put(block);
+                        allBlocks.put(new JSONObject(block.toString()));
 
                         JSONObject raw = new JSONObject();
                         raw.put("sector", sector);
                         raw.put("block", blockIndex);
                         raw.put("hex", bytesToHex(blockBytes, " "));
+                        raw.put("ascii", bytesToAscii(blockBytes));
+                        raw.put("isTrailer", trailer);
                         rawBlocks.put(raw);
+                        payload.put("blocksRead", allBlocks.length());
                     } catch (IOException blockError) {
                         JSONObject block = new JSONObject();
                         block.put("sector", sector);
@@ -212,6 +220,15 @@ public class MainActivity extends BridgeActivity {
         for (int i = 0; i < bytes.length; i++) {
             if (i > 0) sb.append(separator);
             sb.append(String.format("%02X", bytes[i] & 0xFF));
+        }
+        return sb.toString();
+    }
+
+    private String bytesToAscii(byte[] bytes) {
+        StringBuilder sb = new StringBuilder();
+        for (byte value : bytes) {
+            int b = value & 0xFF;
+            sb.append(b >= 0x20 && b <= 0x7E ? (char) b : '.');
         }
         return sb.toString();
     }
