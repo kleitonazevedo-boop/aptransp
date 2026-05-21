@@ -167,6 +167,7 @@ public class MainActivity extends BridgeActivity {
         } catch (Exception error) {
             try {
                 payload.put("error", error.getMessage());
+                payload.put("blocksRead", allBlocks.length());
             } catch (Exception ignored) {}
         } finally {
             if (mifare != null) {
