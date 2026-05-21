@@ -4,14 +4,20 @@
 // READ ONLY — no card mutation, no emulation, no write paths.
 
 export type MifareBlock = {
+  sector?: number;
   block: number;
   hex: string;
+  bytes?: number[];
   isTrailer?: boolean;
+  authSuccess?: boolean;
+  keyType?: string | null;
 };
 
 export type AuthResult = {
   sector: number;
   authenticated: boolean;
+  keyType?: string | null;
+  usedDefaultKey?: boolean;
   blocks?: MifareBlock[];
 };
 
@@ -27,6 +33,8 @@ export type NfcPayload = {
   // Android may also send a flat top-level `blocks` array (read-only HEX dump)
   // without auth grouping. We synthesize sectors from block numbers in that case.
   blocks?: MifareBlock[];
+  rawBlocks?: MifareBlock[];
+  readOnly?: boolean;
 };
 
 export const sectorOfBlock = (block: number): number =>
@@ -71,6 +79,64 @@ const bytesToAscii = (bytes: number[]): string =>
     .map((b) => (b >= 0x20 && b <= 0x7e ? String.fromCharCode(b) : "."))
     .join("");
 
+const normalizeHex = (hex: string): string =>
+  (hex.match(/[0-9a-fA-F]{2}/g) ?? []).map((b) => b.toUpperCase()).join(" ");
+
+const normalizeBlock = (b: MifareBlock, fallbackSector?: number): MifareBlock => {
+  const sector = typeof b.sector === "number" ? b.sector : fallbackSector ?? sectorOfBlock(b.block);
+  const hex = b.hex ? normalizeHex(b.hex) : (b.bytes ?? []).map((x) => x.toString(16).padStart(2, "0").toUpperCase()).join(" ");
+  return {
+    ...b,
+    sector,
+    hex,
+    isTrailer: isTrailerBlock(b.block, sector, b.isTrailer),
+  };
+};
+
+export const getRawBlocks = (payload: NfcPayload | null | undefined): MifareBlock[] => {
+  if (!payload) return [];
+  const byBlock = new Map<number, MifareBlock>();
+  const add = (block: MifareBlock, sector?: number) => {
+    if (typeof block?.block !== "number") return;
+    const normalized = normalizeBlock(block, sector);
+    if (!normalized.hex) return;
+    byBlock.set(normalized.block, normalized);
+  };
+  payload.authResults?.forEach((r) => (r.blocks ?? []).forEach((b) => add(b, r.sector)));
+  payload.rawBlocks?.forEach((b) => add(b, b.sector));
+  payload.blocks?.forEach((b) => add(b, b.sector));
+  return Array.from(byBlock.values()).sort((a, b) => a.block - b.block);
+};
+
+export const normalizeAuthResults = (payload: NfcPayload | null | undefined): AuthResult[] => {
+  if (!payload) return [];
+  const map = new Map<number, AuthResult>();
+  payload.authResults?.forEach((r) => {
+    map.set(r.sector, {
+      ...r,
+      keyType: r.keyType ?? null,
+      usedDefaultKey: !!r.usedDefaultKey,
+      blocks: (r.blocks ?? []).map((b) => normalizeBlock(b, r.sector)),
+    });
+  });
+  getRawBlocks(payload).forEach((b) => {
+    const sector = b.sector ?? sectorOfBlock(b.block);
+    const cur = map.get(sector) ?? {
+      sector,
+      authenticated: true,
+      keyType: b.keyType ?? null,
+      usedDefaultKey: false,
+      blocks: [],
+    };
+    if (!cur.blocks?.some((existing) => existing.block === b.block)) {
+      cur.blocks = [...(cur.blocks ?? []), normalizeBlock(b, sector)];
+    }
+    if (b.authSuccess !== false) cur.authenticated = true;
+    map.set(sector, cur);
+  });
+  return Array.from(map.values()).sort((a, b) => a.sector - b.sector);
+};
+
 export const parseDump = (payload: NfcPayload | null | undefined): ParsedBlock[] => {
   if (!payload) return [];
   const out: ParsedBlock[] = [];
@@ -88,16 +154,7 @@ export const parseDump = (payload: NfcPayload | null | undefined): ParsedBlock[]
     });
   };
 
-  if (payload.authResults?.length) {
-    payload.authResults.forEach((r) => (r.blocks ?? []).forEach((b) => pushBlock(r.sector, b)));
-  }
-  // Fallback / additional: top-level flat blocks array
-  if (Array.isArray(payload.blocks) && payload.blocks.length) {
-    payload.blocks.forEach((b) => {
-      if (out.some((p) => p.block === b.block)) return;
-      pushBlock(sectorOfBlock(b.block), b);
-    });
-  }
+  normalizeAuthResults(payload).forEach((r) => (r.blocks ?? []).forEach((b) => pushBlock(r.sector, b)));
   return out.sort((a, b) => a.block - b.block);
 };
 
