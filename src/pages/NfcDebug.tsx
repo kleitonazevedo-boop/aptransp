@@ -414,14 +414,18 @@ const NfcDebug = () => {
 
   function buildForensicDumpPayload(snapshot?: Snapshot) {
     const source = snapshot?.data ?? parsed;
-    const sourceAuth = source?.authResults ?? authResults ?? [];
+    const sourceAuth = normalizeAuthResults(source) as AuthResult[];
+    const rawBlocks = getRawBlocks(source) as MifareBlock[];
     const hexDump = sourceAuth.flatMap((r) =>
       (r.blocks ?? []).map((b) => ({
         sector: r.sector,
         block: b.block,
         hex: b.hex,
+        bytes: b.bytes ?? b.hex.match(/[0-9a-fA-F]{2}/g)?.map((byte) => parseInt(byte, 16)) ?? [],
         isTrailer: isTrailerBlock(b.block, r.sector, b.isTrailer),
         type: isTrailerBlock(b.block, r.sector, b.isTrailer) ? "trailer" : "data",
+        authSuccess: b.authSuccess ?? r.authenticated,
+        keyType: b.keyType ?? r.keyType ?? null,
       })),
     );
     const validSectors = sourceAuth.filter((r) => r.authenticated).map((r) => r.sector);
@@ -437,6 +441,11 @@ const NfcDebug = () => {
       },
       validSectors,
       blocksRead: hexDump.length,
+      rawBlocks: rawBlocks.map((b) => ({
+        sector: b.sector ?? Math.floor(b.block / 4),
+        block: b.block,
+        hex: b.hex,
+      })),
       blocks: hexDump,
       diffData: {
         snapshotA: snapA ? { id: snapA.id, timestamp: snapA.timestamp, uid: snapA.uid } : null,
