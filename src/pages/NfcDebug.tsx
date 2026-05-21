@@ -15,16 +15,24 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import ForensicReport from "@/components/ForensicReport";
+import { getRawBlocks, normalizeAuthResults, sectorOfBlock } from "@/lib/forensic";
 
 type MifareBlock = {
+  sector?: number;
   block: number;
   hex: string;
+  bytes?: number[];
   isTrailer?: boolean;
+  authSuccess?: boolean;
+  keyType?: string | null;
+  usedDefaultKey?: boolean;
 };
 
 type AuthResult = {
   sector: number;
   authenticated: boolean;
+  keyType?: string | null;
+  usedDefaultKey?: boolean;
   blocks?: MifareBlock[];
 };
 
@@ -43,6 +51,10 @@ type NfcPayload = {
   sectorCount?: number;
   blockCount?: number;
   authResults?: AuthResult[];
+  blocks?: MifareBlock[];
+  rawBlocks?: MifareBlock[];
+  readOnly?: boolean;
+  error?: string;
 };
 
 type Snapshot = {
@@ -55,6 +67,45 @@ type Snapshot = {
 type Status = "waiting" | "received" | "error";
 
 const SNAPSHOT_KEY = "nfc_debug_snapshots_v1";
+
+const extractNfcEventPayload = (event: Event): unknown => {
+  const custom = event as CustomEvent;
+  if (custom.detail !== undefined && custom.detail !== null) return custom.detail;
+  const eventObject = event as unknown as Record<string, unknown>;
+  const keys = [
+    "uid",
+    "tech",
+    "timestamp",
+    "mifareType",
+    "mifareSize",
+    "sectorCount",
+    "blockCount",
+    "authResults",
+    "blocks",
+    "rawBlocks",
+    "readOnly",
+    "error",
+  ];
+  const payload = keys.reduce<Record<string, unknown>>((acc, key) => {
+    if (eventObject[key] !== undefined) acc[key] = eventObject[key];
+    return acc;
+  }, {});
+  return Object.keys(payload).length > 0 ? payload : null;
+};
+
+const normalizeNfcPayload = (value: unknown): NfcPayload => {
+  const data = typeof value === "string" ? JSON.parse(value) : value;
+  const obj = (data ?? {}) as NfcPayload;
+  const rawBlocks = getRawBlocks(obj) as MifareBlock[];
+  const authResults = normalizeAuthResults(obj) as AuthResult[];
+  return {
+    ...obj,
+    rawBlocks,
+    blocks: rawBlocks,
+    authResults,
+    readOnly: true,
+  };
+};
 
 const mifareTypeLabel = (type?: number) => {
   if (type === undefined || type === null) return "-";
@@ -95,10 +146,9 @@ const persistSnapshots = (list: Snapshot[]) => {
   }
 };
 
-const countBlocks = (s: Snapshot) =>
-  (s.data.authResults ?? []).reduce((acc, r) => acc + (r.blocks?.length ?? 0), 0);
+const countBlocks = (s: Snapshot) => getRawBlocks(s.data).length;
 
-const countSectors = (s: Snapshot) => s.data.authResults?.length ?? 0;
+const countSectors = (s: Snapshot) => normalizeAuthResults(s.data).length;
 
 const formatTs = (ts: number) =>
   new Date(ts).toLocaleString("pt-BR", {
@@ -180,7 +230,7 @@ type BlockMap = Map<number, { hex: string; sector: number; isTrailer: boolean }>
 
 const buildBlockMap = (snap: Snapshot): BlockMap => {
   const map: BlockMap = new Map();
-  (snap.data.authResults ?? []).forEach((r) => {
+  normalizeAuthResults(snap.data).forEach((r) => {
     (r.blocks ?? []).forEach((b) => {
       map.set(b.block, {
         hex: b.hex,
@@ -260,14 +310,14 @@ const NfcDebug = () => {
   useEffect(() => {
     const handler = (event: Event) => {
       try {
-        const detail = (event as CustomEvent).detail;
+        const detail = extractNfcEventPayload(event);
         console.log("[NFC Debug] event.detail:", detail);
 
         setRaw(detail);
         setError("");
         setStatus("received");
 
-        const data = (detail ?? {}) as NfcPayload;
+        const data = normalizeNfcPayload(detail);
         setParsed(data);
         setUid(typeof data.uid === "string" ? data.uid : "");
         setTech(Array.isArray(data.tech) ? data.tech : []);
@@ -279,7 +329,7 @@ const NfcDebug = () => {
 
         if (Array.isArray(data.authResults)) {
           console.log("AUTH RESULTS", data.authResults);
-          console.log("BLOCK DUMP", data.authResults);
+          console.log("BLOCK DUMP", data.rawBlocks ?? data.blocks ?? []);
           setAuthResults(data.authResults);
           setAuthKey((k) => k + 1);
         } else {
@@ -364,14 +414,18 @@ const NfcDebug = () => {
 
   function buildForensicDumpPayload(snapshot?: Snapshot) {
     const source = snapshot?.data ?? parsed;
-    const sourceAuth = source?.authResults ?? authResults ?? [];
+    const sourceAuth = normalizeAuthResults(source) as AuthResult[];
+    const rawBlocks = getRawBlocks(source) as MifareBlock[];
     const hexDump = sourceAuth.flatMap((r) =>
       (r.blocks ?? []).map((b) => ({
         sector: r.sector,
         block: b.block,
         hex: b.hex,
+        bytes: b.bytes ?? b.hex.match(/[0-9a-fA-F]{2}/g)?.map((byte) => parseInt(byte, 16)) ?? [],
         isTrailer: isTrailerBlock(b.block, r.sector, b.isTrailer),
         type: isTrailerBlock(b.block, r.sector, b.isTrailer) ? "trailer" : "data",
+        authSuccess: b.authSuccess ?? r.authenticated,
+        keyType: b.keyType ?? r.keyType ?? null,
       })),
     );
     const validSectors = sourceAuth.filter((r) => r.authenticated).map((r) => r.sector);
@@ -387,6 +441,11 @@ const NfcDebug = () => {
       },
       validSectors,
       blocksRead: hexDump.length,
+      rawBlocks: rawBlocks.map((b) => ({
+        sector: b.sector ?? sectorOfBlock(b.block),
+        block: b.block,
+        hex: b.hex,
+      })),
       blocks: hexDump,
       diffData: {
         snapshotA: snapA ? { id: snapA.id, timestamp: snapA.timestamp, uid: snapA.uid } : null,
@@ -447,11 +506,13 @@ const NfcDebug = () => {
 
   const handleSaveSnapshot = async () => {
     if (!parsed) return;
+    const rawBlocks = getRawBlocks(parsed) as MifareBlock[];
+    const normalizedAuth = normalizeAuthResults(parsed) as AuthResult[];
     const snap: Snapshot = {
       id: `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
       timestamp: Date.now(),
       uid: uid || "-",
-      data: { ...parsed, authResults: authResults ?? [] },
+      data: { ...parsed, rawBlocks, blocks: rawBlocks, authResults: normalizedAuth, readOnly: true },
     };
     const next = [snap, ...snapshots].slice(0, 50);
     setSnapshots(next);
@@ -510,7 +571,7 @@ const NfcDebug = () => {
   const variableAnalysis = useMemo(() => {
     const seen = new Map<number, { values: Set<string>; sector: number; isTrailer: boolean; total: number }>();
     snapshots.forEach((snap) => {
-      (snap.data.authResults ?? []).forEach((r) => {
+      normalizeAuthResults(snap.data).forEach((r) => {
         (r.blocks ?? []).forEach((b) => {
           const cur = seen.get(b.block) ?? {
             values: new Set<string>(),

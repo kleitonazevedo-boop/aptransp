@@ -80,6 +80,7 @@ class NfcHandler(
                 Log.d("MIFARE", "MIFARE DETECTADO")
                 try {
                     mifare.connect()
+                    mifare.timeout = 5000
                     mifareType = mifare.type
                     mifareSize = mifare.size
                     mifareSectorCount = mifare.sectorCount
@@ -89,22 +90,34 @@ class NfcHandler(
 
                     for (sector in 0 until mifare.sectorCount) {
 
-                        val auth = mifare.authenticateSectorWithKeyA(
-                            sector,
-                            MifareClassic.KEY_DEFAULT
-                        )
+                        var authenticated = false
+                        try {
+                            authenticated = mifare.authenticateSectorWithKeyA(
+                                sector,
+                                MifareClassic.KEY_DEFAULT
+                            )
+
+                            if (!authenticated) {
+                                authenticated = mifare.authenticateSectorWithKeyB(
+                                    sector,
+                                    MifareClassic.KEY_DEFAULT
+                                )
+                            }
+                        } catch (e: Exception) {
+                            Log.e("MIFARE_AUTH", "Erro ao autenticar setor $sector", e)
+                        }
 
                         Log.d(
                             "MIFARE_AUTH",
-                            "Sector $sector -> $auth"
+                            "Sector $sector authenticated=$authenticated"
                         )
 
                         val sectorJson = JSONObject().apply {
                             put("sector", sector)
-                            put("authenticated", auth)
+                            put("authenticated", authenticated)
                         }
 
-                        if (auth) {
+                        if (authenticated) {
                             // =========================
                             // LEITURA HEX
                             // =========================
@@ -121,6 +134,10 @@ class NfcHandler(
                                     }
 
                                     Log.d(
+                                        "MIFARE_READ",
+                                        "Sector $sector Block $blockIndex"
+                                    )
+                                    Log.d(
                                         "MIFARE_BLOCK",
                                         "Sector $sector Block $blockIndex -> $hex"
                                     )
@@ -133,12 +150,33 @@ class NfcHandler(
                                         put("isTrailer", isTrailer)
                                     }
                                     blockDataArray.put(blockJson)
-                                } catch (e: Exception) {
+                                    Thread.sleep(10)
+                                } catch (e: android.nfc.TagLostException) {
                                     Log.e(
-                                        "MIFARE_BLOCK",
-                                        "Erro bloco $blockIndex",
+                                        "MIFARE",
+                                        "TAG LOST",
                                         e
                                     )
+                                    try {
+                                        mifare.close()
+                                        Thread.sleep(100)
+                                        mifare.connect()
+                                        mifare.timeout = 5000
+                                    } catch (reconnectError: Exception) {
+                                        Log.e(
+                                            "MIFARE",
+                                            "RECONNECT FAILED",
+                                            reconnectError
+                                        )
+                                    }
+                                    continue
+                                } catch (e: Exception) {
+                                    Log.e(
+                                        "MIFARE",
+                                        "BLOCK ERROR",
+                                        e
+                                    )
+                                    continue
                                 }
                             }
                             sectorJson.put("blocks", blockDataArray)
