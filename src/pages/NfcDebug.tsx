@@ -68,6 +68,45 @@ type Status = "waiting" | "received" | "error";
 
 const SNAPSHOT_KEY = "nfc_debug_snapshots_v1";
 
+const extractNfcEventPayload = (event: Event): unknown => {
+  const custom = event as CustomEvent;
+  if (custom.detail !== undefined && custom.detail !== null) return custom.detail;
+  const eventObject = event as unknown as Record<string, unknown>;
+  const keys = [
+    "uid",
+    "tech",
+    "timestamp",
+    "mifareType",
+    "mifareSize",
+    "sectorCount",
+    "blockCount",
+    "authResults",
+    "blocks",
+    "rawBlocks",
+    "readOnly",
+    "error",
+  ];
+  const payload = keys.reduce<Record<string, unknown>>((acc, key) => {
+    if (eventObject[key] !== undefined) acc[key] = eventObject[key];
+    return acc;
+  }, {});
+  return Object.keys(payload).length > 0 ? payload : null;
+};
+
+const normalizeNfcPayload = (value: unknown): NfcPayload => {
+  const data = typeof value === "string" ? JSON.parse(value) : value;
+  const obj = (data ?? {}) as NfcPayload;
+  const rawBlocks = getRawBlocks(obj) as MifareBlock[];
+  const authResults = normalizeAuthResults(obj) as AuthResult[];
+  return {
+    ...obj,
+    rawBlocks,
+    blocks: rawBlocks,
+    authResults,
+    readOnly: true,
+  };
+};
+
 const mifareTypeLabel = (type?: number) => {
   if (type === undefined || type === null) return "-";
   switch (type) {
