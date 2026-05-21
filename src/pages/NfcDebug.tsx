@@ -107,10 +107,9 @@ const persistSnapshots = (list: Snapshot[]) => {
   }
 };
 
-const countBlocks = (s: Snapshot) =>
-  (s.data.authResults ?? []).reduce((acc, r) => acc + (r.blocks?.length ?? 0), 0);
+const countBlocks = (s: Snapshot) => getRawBlocks(s.data).length;
 
-const countSectors = (s: Snapshot) => s.data.authResults?.length ?? 0;
+const countSectors = (s: Snapshot) => normalizeAuthResults(s.data).length;
 
 const formatTs = (ts: number) =>
   new Date(ts).toLocaleString("pt-BR", {
@@ -192,7 +191,7 @@ type BlockMap = Map<number, { hex: string; sector: number; isTrailer: boolean }>
 
 const buildBlockMap = (snap: Snapshot): BlockMap => {
   const map: BlockMap = new Map();
-  (snap.data.authResults ?? []).forEach((r) => {
+  normalizeAuthResults(snap.data).forEach((r) => {
     (r.blocks ?? []).forEach((b) => {
       map.set(b.block, {
         hex: b.hex,
