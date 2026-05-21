@@ -571,7 +571,7 @@ const NfcDebug = () => {
   const variableAnalysis = useMemo(() => {
     const seen = new Map<number, { values: Set<string>; sector: number; isTrailer: boolean; total: number }>();
     snapshots.forEach((snap) => {
-      (snap.data.authResults ?? []).forEach((r) => {
+      normalizeAuthResults(snap.data).forEach((r) => {
         (r.blocks ?? []).forEach((b) => {
           const cur = seen.get(b.block) ?? {
             values: new Set<string>(),
