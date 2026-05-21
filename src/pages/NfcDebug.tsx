@@ -15,16 +15,24 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import ForensicReport from "@/components/ForensicReport";
+import { getRawBlocks, normalizeAuthResults } from "@/lib/forensic";
 
 type MifareBlock = {
+  sector?: number;
   block: number;
   hex: string;
+  bytes?: number[];
   isTrailer?: boolean;
+  authSuccess?: boolean;
+  keyType?: string | null;
+  usedDefaultKey?: boolean;
 };
 
 type AuthResult = {
   sector: number;
   authenticated: boolean;
+  keyType?: string | null;
+  usedDefaultKey?: boolean;
   blocks?: MifareBlock[];
 };
 
@@ -43,6 +51,10 @@ type NfcPayload = {
   sectorCount?: number;
   blockCount?: number;
   authResults?: AuthResult[];
+  blocks?: MifareBlock[];
+  rawBlocks?: MifareBlock[];
+  readOnly?: boolean;
+  error?: string;
 };
 
 type Snapshot = {
