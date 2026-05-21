@@ -78,6 +78,7 @@ const extractNfcEventPayload = (event: Event): unknown => {
     "uid",
     "tech",
     "timestamp",
+    "blocksRead",
     "mifareType",
     "mifareSize",
     "sectorCount",
