@@ -122,9 +122,7 @@ class NfcHandler(
                     var mifareBlockCount: Int? = null
 
                     val authResultsArray = JSONArray()
-
-                    // 🔥 NOVO
-                    val sectorsArray = JSONArray()
+                    val rawBlocksArray = JSONArray()
 
                     // =========================
                     // MIFARE CLASSIC
@@ -151,6 +149,7 @@ class NfcHandler(
                             val startTime = System.currentTimeMillis()
 
                             var sectorsRead = 0
+                            var totalBlocksRead = 0
 
                             for (sector in 0 until mifare.sectorCount) {
 
@@ -194,16 +193,6 @@ class NfcHandler(
                                                     "AUTH OK sector=$sector key=$keyHex (A)"
                                                 )
                                             }
-
-                                            authResultsArray.put(
-                                                JSONObject().apply {
-                                                    put("sector", sector)
-                                                    put("authenticated", true)
-                                                    put("keyType", "A")
-                                                    put("keyUsed", keyHex)
-                                                }
-                                            )
-
                                             break
 
                                         } else {
@@ -235,16 +224,6 @@ class NfcHandler(
                                                     "AUTH OK sector=$sector key=$keyHex (B)"
                                                 )
                                             }
-
-                                            authResultsArray.put(
-                                                JSONObject().apply {
-                                                    put("sector", sector)
-                                                    put("authenticated", true)
-                                                    put("keyType", "B")
-                                                    put("keyUsed", keyHex)
-                                                }
-                                            )
-
                                             break
 
                                         } else {
@@ -261,191 +240,80 @@ class NfcHandler(
                                     }
                                 }
 
-                                // =========================
-                                // AUTH FAIL
-                                // =========================
+                                if (authenticated) {
+                                    
+                                    sectorsRead++
 
-                                if (!authenticated) {
+                                    val blockDataArray = JSONArray()
+                                    val startBlock = mifare.sectorToBlock(sector)
+                                    val blockCountInSector = mifare.getBlockCountInSector(sector)
 
+                                    for (i in 0 until blockCountInSector) {
+
+                                        val blockIndex = startBlock + i
+
+                                        try {
+
+                                            val data = mifare.readBlock(blockIndex)
+                                            val hex = data.toHex()
+                                            totalBlocksRead++
+
+                                            if (BuildConfig.DEBUG) {
+                                                Log.d(
+                                                    "NFC",
+                                                    "READ OK sector=$sector block=$blockIndex data=$hex"
+                                                )
+                                            }
+
+                                            val isTrailer = i == blockCountInSector - 1
+                                            val ascii = String(data).replace(Regex("[^\\x20-\\x7E]"), ".")
+                                            val isEmpty = data.all { it == 0.toByte() }
+
+                                            val blockJson = JSONObject().apply {
+                                                put("sector", sector)
+                                                put("block", blockIndex)
+                                                put("hex", hex)
+                                                put("ascii", ascii)
+                                                put("isTrailer", isTrailer)
+                                                put("isEmpty", isEmpty)
+                                            }
+
+                                            blockDataArray.put(blockJson)
+                                            rawBlocksArray.put(blockJson)
+
+                                            Thread.sleep(10)
+
+                                        } catch (e: TagLostException) {
+                                            Log.e("MIFARE", "TAG LOST", e)
+                                            throw e // Re-throw to handle in outer block or stop
+                                        } catch (e: Exception) {
+                                            if (BuildConfig.DEBUG) {
+                                                Log.e("NFC", "READ FAIL sector=$sector block=$blockIndex error=${e.message}")
+                                            }
+                                        }
+                                    }
+
+                                    // SAVE SECTOR
+                                    val sectorJson = JSONObject().apply {
+                                        put("sector", sector)
+                                        put("authenticated", true)
+                                        put("keyType", usedKey ?: JSONObject.NULL)
+                                        put("keyUsed", usedKeyHex ?: JSONObject.NULL)
+                                        put("blocks", blockDataArray)
+                                    }
+                                    authResultsArray.put(sectorJson)
+
+                                } else {
+                                    // AUTH FAIL
                                     authResultsArray.put(
                                         JSONObject().apply {
                                             put("sector", sector)
                                             put("authenticated", false)
                                             put("keyUsed", JSONObject.NULL)
-                                            put(
-                                                "error",
-                                                "Authentication failed"
-                                            )
+                                            put("error", "Authentication failed")
                                         }
                                     )
-
-                                    continue
                                 }
-
-                                sectorsRead++
-
-                                // =========================
-                                // READ BLOCKS
-                                // =========================
-
-                                val blockDataArray = JSONArray()
-
-                                val startBlock =
-                                    mifare.sectorToBlock(sector)
-
-                                val blockCountInSector =
-                                    mifare.getBlockCountInSector(sector)
-
-                                for (i in 0 until blockCountInSector) {
-
-                                    val blockIndex = startBlock + i
-
-                                    try {
-
-                                        val data =
-                                            mifare.readBlock(blockIndex)
-
-                                        val hex = data.toHex()
-
-                                        if (BuildConfig.DEBUG) {
-
-                                            Log.d(
-                                                "NFC",
-                                                "READ OK sector=$sector block=$blockIndex data=$hex"
-                                            )
-                                        }
-
-                                        val isTrailer =
-                                            i == blockCountInSector - 1
-
-                                        val ascii =
-                                            String(data).replace(
-                                                Regex("[^\\x20-\\x7E]"),
-                                                "."
-                                            )
-
-                                        val isEmpty =
-                                            data.all {
-                                                it == 0.toByte()
-                                            }
-
-                                        val blockJson =
-                                            JSONObject().apply {
-
-                                                put(
-                                                    "sector",
-                                                    sector
-                                                )
-
-                                                put(
-                                                    "block",
-                                                    blockIndex
-                                                )
-
-                                                put(
-                                                    "hex",
-                                                    hex
-                                                )
-
-                                                put(
-                                                    "ascii",
-                                                    ascii
-                                                )
-
-                                                put(
-                                                    "isTrailer",
-                                                    isTrailer
-                                                )
-
-                                                put(
-                                                    "isEmpty",
-                                                    isEmpty
-                                                )
-                                            }
-
-                                        // 🔥 AGORA SALVA REALMENTE
-                                        blockDataArray.put(blockJson)
-
-                                        Thread.sleep(10)
-
-                                    } catch (e: TagLostException) {
-
-                                        Log.e(
-                                            "MIFARE",
-                                            "TAG LOST",
-                                            e
-                                        )
-
-                                        try {
-
-                                            mifare.close()
-
-                                            Thread.sleep(100)
-
-                                            mifare.connect()
-
-                                            mifare.timeout = 8000
-
-                                        } catch (reconnectError: Exception) {
-
-                                            Log.e(
-                                                "MIFARE",
-                                                "RECONNECT FAILED",
-                                                reconnectError
-                                            )
-                                        }
-
-                                        continue
-
-                                    } catch (e: Exception) {
-
-                                        if (BuildConfig.DEBUG) {
-
-                                            Log.e(
-                                                "NFC",
-                                                "READ FAIL sector=$sector block=$blockIndex error=${e.message}"
-                                            )
-                                        }
-
-                                        continue
-                                    }
-                                }
-
-                                // =========================
-                                // SAVE SECTOR
-                                // =========================
-
-                                val sectorJson =
-                                    JSONObject().apply {
-
-                                        put(
-                                            "sector",
-                                            sector
-                                        )
-
-                                        put(
-                                            "authenticated",
-                                            true
-                                        )
-
-                                        put(
-                                            "keyType",
-                                            usedKey ?: JSONObject.NULL
-                                        )
-
-                                        put(
-                                            "keyUsed",
-                                            usedKeyHex ?: JSONObject.NULL
-                                        )
-
-                                        put(
-                                            "blocks",
-                                            blockDataArray
-                                        )
-                                    }
-
-                                // 🔥 CORREÇÃO PRINCIPAL
-                                sectorsArray.put(sectorJson)
                             }
 
                             if (BuildConfig.DEBUG) {
@@ -462,25 +330,10 @@ class NfcHandler(
                                     "NFC",
                                     "SECTORS READ = $sectorsRead"
                                 )
-
+                                
                                 Log.d(
-                                    "MIFARE",
-                                    "TYPE: $mifareType"
-                                )
-
-                                Log.d(
-                                    "MIFARE",
-                                    "SIZE: $mifareSize"
-                                )
-
-                                Log.d(
-                                    "MIFARE",
-                                    "SECTORS: $mifareSectorCount"
-                                )
-
-                                Log.d(
-                                    "MIFARE",
-                                    "BLOCKS: $mifareBlockCount"
+                                    "NFC",
+                                    "BLOCKS READ = $totalBlocksRead"
                                 )
                             }
 
@@ -516,24 +369,6 @@ class NfcHandler(
                         techArray.put(tech)
                     }
 
-                    if (BuildConfig.DEBUG) {
-
-                        Log.d(
-                            "NFC_DEBUG",
-                            "TAG DETECTADA"
-                        )
-
-                        Log.d(
-                            "NFC_DEBUG",
-                            "UID GERADO: $uid"
-                        )
-
-                        Log.d(
-                            "NFC_DEBUG",
-                            "UID: $uid"
-                        )
-                    }
-
                     // =========================
                     // JSON FINAL
                     // =========================
@@ -541,57 +376,24 @@ class NfcHandler(
                     val json = JSONObject().apply {
 
                         put("uid", uid)
-
                         put("tech", techArray)
+                        put("timestamp", System.currentTimeMillis())
 
-                        put(
-                            "timestamp",
-                            System.currentTimeMillis()
-                        )
+                        put("mifareType", mifareType ?: JSONObject.NULL)
+                        put("mifareSize", mifareSize ?: JSONObject.NULL)
+                        put("sectorCount", mifareSectorCount ?: JSONObject.NULL)
+                        put("blockCount", mifareBlockCount ?: JSONObject.NULL)
 
-                        put(
-                            "mifareType",
-                            mifareType ?: JSONObject.NULL
-                        )
-
-                        put(
-                            "mifareSize",
-                            mifareSize ?: JSONObject.NULL
-                        )
-
-                        put(
-                            "sectorCount",
-                            mifareSectorCount ?: JSONObject.NULL
-                        )
-
-                        put(
-                            "blockCount",
-                            mifareBlockCount ?: JSONObject.NULL
-                        )
-
-                        put(
-                            "authResults",
-                            authResultsArray
-                        )
-
-                        // 🔥 NOVO
-                        put(
-                            "sectors",
-                            sectorsArray
-                        )
+                        put("authResults", authResultsArray)
+                        put("rawBlocks", rawBlocksArray)
                     }
 
                     if (BuildConfig.DEBUG) {
 
-                        Log.d(
-                            "NFC_DEBUG",
-                            "🔥 VOU ENVIAR PARA WEBVIEW"
-                        )
-
-                        Log.d(
-                            "NFC_DEBUG",
-                            "Enviando para React: $json"
-                        )
+                        Log.d("NFC_DEBUG", "TAG DETECTADA")
+                        Log.d("NFC_DEBUG", "UID: $uid")
+                        Log.d("NFC_DEBUG", "🔥 VOU ENVIAR PARA WEBVIEW")
+                        Log.d("NFC_DEBUG", "Enviando para React: $json")
                     }
 
                     // =========================
@@ -601,28 +403,15 @@ class NfcHandler(
                     bridge.webView.post {
 
                         if (BuildConfig.DEBUG) {
-
-                            Log.d(
-                                "NFC_DEBUG",
-                                "UI THREAD OK"
-                            )
+                            Log.d("NFC_DEBUG", "UI THREAD OK")
                         }
 
-                        val safeJson =
-                            JSONObject.quote(json.toString())
+                        val safeJson = JSONObject.quote(json.toString())
 
                         bridge.triggerJSEvent(
                             "nfcResult",
                             "window",
                             "JSON.parse($safeJson)"
-                        )
-                    }
-
-                    if (BuildConfig.DEBUG) {
-
-                        Log.d(
-                            "NFC_DEBUG",
-                            "🔥 ENVIO CONCLUÍDO"
                         )
                     }
 
