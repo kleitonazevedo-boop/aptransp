@@ -114,7 +114,7 @@ export const databaseService = {
       if (error) throw error;
       const result: DbLine[] = [];
       const seen = new Set<string>();
-      for (const row of (data ?? []) as Array<{
+      for (const row of (data ?? []) as unknown as Array<{
         stop_id: string;
         transport_lines: {
           id: string;
