@@ -5,6 +5,7 @@ import PrivacyConsentScreen from "./screens/PrivacyConsentScreen";
 import WalletScreen from "./screens/WalletScreen";
 import MapScreen from "./screens/MapScreen";
 import RouteScreen from "./screens/RouteScreen";
+import LinhasProximasScreen from "./screens/LinhasProximasScreen";
 import NfcDiagnosticScreen from "./screens/NfcDiagnosticScreen";
 import AboutScreen from "./screens/AboutScreen";
 import PrivacyPolicyScreen from "./screens/PrivacyPolicyScreen";
@@ -16,6 +17,7 @@ type Screen =
   | "wallet"
   | "map"
   | "route"
+  | "nearby"
   | "nfc-diagnostic"
   | "about"
   | "privacy"
@@ -50,11 +52,13 @@ const Index = () => {
           onAbout={() => setScreen("about")}
           onOpenMap={() => setScreen("map")}
           onOpenRoute={() => setScreen("route")}
+          onOpenNearby={() => setScreen("nearby")}
           onOpenNfcDiagnostic={() => setScreen("nfc-diagnostic")}
         />
       )}
       {screen === "map" && <MapScreen onBack={() => setScreen("wallet")} />}
       {screen === "route" && <RouteScreen onBack={() => setScreen("wallet")} />}
+      {screen === "nearby" && <LinhasProximasScreen onBack={() => setScreen("wallet")} />}
       {screen === "nfc-diagnostic" && (
         <NfcDiagnosticScreen onBack={() => setScreen("wallet")} />
       )}

@@ -24,6 +24,7 @@ interface Props {
   onAbout: () => void;
   onOpenMap: () => void;
   onOpenRoute: () => void;
+  onOpenNearby: () => void;
   onOpenNfcDiagnostic: () => void;
 }
 
@@ -36,7 +37,7 @@ interface CardMeta {
   icon: JSX.Element;
 }
 
-const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: Props) => {
+const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfcDiagnostic }: Props) => {
   const [balance, setBalance] = useState<number | null>(null);
   const [reading, setReading] = useState(false);
   const [active, setActive] = useState<CardId | null>(null);
@@ -153,8 +154,8 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNfcDiagnostic }: 
           </div>
           <div className="grid grid-cols-4 gap-2">
             <ActionTile icon={<MapIcon className="w-5 h-5" />} label="Abrir mapa" onClick={onOpenMap} tone="sky" />
-            <ActionTile icon={<Bus className="w-5 h-5" />} label="Linhas próximas" onClick={() => {}} tone="sky" />
-            <ActionTile icon={<Train className="w-5 h-5" />} label="Estações próximas" onClick={() => {}} tone="sky" />
+            <ActionTile icon={<Bus className="w-5 h-5" />} label="Linhas próximas" onClick={onOpenNearby} tone="sky" />
+            <ActionTile icon={<Train className="w-5 h-5" />} label="Estações próximas" onClick={onOpenNearby} tone="sky" />
             <ActionTile icon={<Star className="w-5 h-5" />} label="Favoritos" onClick={() => {}} tone="sky" />
           </div>
         </div>
