@@ -7,26 +7,23 @@ if (!apiKey) {
   console.warn("[googleMaps] Browser key ausente. Conecte o Google Maps Platform connector.");
 }
 
-let loader: Loader | null = null;
+let loaderPromise: Promise<typeof google> | null = null;
 
 function getLoader(): Loader {
-  if (!loader) {
-    loader = new Loader({
-      apiKey: apiKey ?? "",
-      version: "weekly",
-      libraries: ["places", "routes", "geocoding", "marker"],
-      ...(channel ? { channel } : {}),
-    });
-  }
-  return loader;
+  return new Loader({
+    apiKey: apiKey ?? "",
+    version: "weekly",
+    libraries: ["places", "routes", "geocoding", "marker", "geometry"],
+    ...(channel ? { channel } : {}),
+  });
 }
 
-/** Carrega o Google Maps JS SDK e devolve o namespace google.maps. */
+/** Carrega o Google Maps JS SDK (singleton). */
 export async function loadGoogleMaps(): Promise<typeof google.maps> {
-  await getLoader().importLibrary("maps");
-  await getLoader().importLibrary("places");
-  await getLoader().importLibrary("routes");
-  await getLoader().importLibrary("geocoding");
+  if (!loaderPromise) {
+    loaderPromise = getLoader().load();
+  }
+  await loaderPromise;
   return google.maps;
 }
 
