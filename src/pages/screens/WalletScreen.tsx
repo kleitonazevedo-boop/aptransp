@@ -24,6 +24,7 @@ interface Props {
   onAbout: () => void;
   onOpenMap: () => void;
   onOpenRoute: () => void;
+  onOpenNearby: () => void;
   onOpenNfcDiagnostic: () => void;
 }
 
