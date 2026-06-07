@@ -5,23 +5,15 @@ import PrivacyConsentScreen from "./screens/PrivacyConsentScreen";
 import WalletScreen from "./screens/WalletScreen";
 import MapScreen from "./screens/MapScreen";
 import RouteScreen from "./screens/RouteScreen";
-import LinhasProximasScreen from "./screens/LinhasProximasScreen";
 import NfcDiagnosticScreen from "./screens/NfcDiagnosticScreen";
 import AboutScreen from "./screens/AboutScreen";
 import PrivacyPolicyScreen from "./screens/PrivacyPolicyScreen";
 import TermsScreen from "./screens/TermsScreen";
 
 type Screen =
-  | "splash"
-  | "consent"
-  | "wallet"
-  | "map"
-  | "route"
-  | "nearby"
-  | "nfc-diagnostic"
-  | "about"
-  | "privacy"
-  | "terms";
+  | "splash" | "consent" | "wallet" | "map" | "route"
+  | "route-nearby-lines" | "route-nearby-stations"
+  | "nfc-diagnostic" | "about" | "privacy" | "terms";
 const CONSENT_KEY = "aptransp_consent_v1";
 
 const Index = () => {
@@ -40,38 +32,45 @@ const Index = () => {
   return (
     <>
       <Helmet>
-        <title>aptransp — Consulta de Saldo de Bilhete Único</title>
-        <meta name="description" content="Consulte o saldo do seu Bilhete Único de forma rápida e fácil. Leitura NFC do cartão de transporte público em tempo real." />
-        <link rel="canonical" href="https://bilhete-tap-reader.lovable.app/" />
+        <title>aptransp — Mobilidade urbana inteligente</title>
+        <meta name="description" content="Rotas, linhas e estações de transporte público em tempo real. Consulta de saldo do Bilhete Único via NFC." />
+        <link rel="canonical" href="https://aptransp.lovable.app/" />
       </Helmet>
       <div className="app-shell">
-      {screen === "splash" && <SplashScreen onEnter={handleEnter} />}
-      {screen === "consent" && <PrivacyConsentScreen onAccept={handleAcceptConsent} />}
-      {screen === "wallet" && (
-        <WalletScreen
-          onAbout={() => setScreen("about")}
-          onOpenMap={() => setScreen("map")}
-          onOpenRoute={() => setScreen("route")}
-          onOpenNearby={() => setScreen("nearby")}
-          onOpenNfcDiagnostic={() => setScreen("nfc-diagnostic")}
-        />
-      )}
-      {screen === "map" && <MapScreen onBack={() => setScreen("wallet")} />}
-      {screen === "route" && <RouteScreen onBack={() => setScreen("wallet")} />}
-      {screen === "nearby" && <LinhasProximasScreen onBack={() => setScreen("wallet")} />}
-      {screen === "nfc-diagnostic" && (
-        <NfcDiagnosticScreen onBack={() => setScreen("wallet")} />
-      )}
-      {screen === "about" && (
-        <AboutScreen
-          onBack={() => setScreen("wallet")}
-          onPrivacy={() => setScreen("privacy")}
-          onTerms={() => setScreen("terms")}
-        />
-      )}
-      {screen === "privacy" && <PrivacyPolicyScreen onBack={() => setScreen("about")} />}
-      {screen === "terms" && <TermsScreen onBack={() => setScreen("about")} />}
-    </div>
+        {screen === "splash" && <SplashScreen onEnter={handleEnter} />}
+        {screen === "consent" && <PrivacyConsentScreen onAccept={handleAcceptConsent} />}
+        {screen === "wallet" && (
+          <WalletScreen
+            onAbout={() => setScreen("about")}
+            onOpenMap={() => setScreen("map")}
+            onOpenRoute={() => setScreen("route")}
+            onOpenNearby={() => setScreen("route-nearby-lines")}
+            onOpenNfcDiagnostic={() => setScreen("nfc-diagnostic")}
+          />
+        )}
+        {screen === "map" && (
+          <MapScreen
+            onBack={() => setScreen("wallet")}
+            onNearbyLines={() => setScreen("route-nearby-lines")}
+            onNearbyStations={() => setScreen("route-nearby-stations")}
+          />
+        )}
+        {screen === "route" && <RouteScreen onBack={() => setScreen("wallet")} />}
+        {screen === "route-nearby-lines" &&
+          <RouteScreen onBack={() => setScreen("wallet")} initialMode="nearby-lines" />}
+        {screen === "route-nearby-stations" &&
+          <RouteScreen onBack={() => setScreen("wallet")} initialMode="nearby-stations" />}
+        {screen === "nfc-diagnostic" && <NfcDiagnosticScreen onBack={() => setScreen("wallet")} />}
+        {screen === "about" && (
+          <AboutScreen
+            onBack={() => setScreen("wallet")}
+            onPrivacy={() => setScreen("privacy")}
+            onTerms={() => setScreen("terms")}
+          />
+        )}
+        {screen === "privacy" && <PrivacyPolicyScreen onBack={() => setScreen("about")} />}
+        {screen === "terms" && <TermsScreen onBack={() => setScreen("about")} />}
+      </div>
     </>
   );
 };
