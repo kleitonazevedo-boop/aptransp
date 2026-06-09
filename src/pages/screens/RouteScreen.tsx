@@ -22,7 +22,7 @@ import { favoritesService, type FavoriteRoute } from "@/services/favoritesServic
 import { profileService } from "@/services/profileService";
 import { sptransService } from "@/services/sptransService";
 
-interface Props { onBack: () => void; initialMode?: ContentMode }
+interface Props { onBack?: () => void; initialMode?: ContentMode; embedded?: boolean }
 
 type ContentMode = "default" | "route" | "favorites" | "nearby-lines" | "nearby-stations";
 
