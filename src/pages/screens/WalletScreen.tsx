@@ -265,6 +265,8 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
           onFavorites={() => setActive("favorites")}
           onAbout={onAbout}
           onNfcDiagnostic={onOpenNfcDiagnostic}
+          onProfile={onOpenProfile}
+          onAdmin={onOpenAdmin}
         />
         <div className="flex items-center gap-2"><Logo className="w-8 h-8" /></div>
         <AlertTriangle className="w-5 h-5 text-brand-yellow" />
