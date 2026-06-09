@@ -9,11 +9,19 @@ import NfcDiagnosticScreen from "./screens/NfcDiagnosticScreen";
 import AboutScreen from "./screens/AboutScreen";
 import PrivacyPolicyScreen from "./screens/PrivacyPolicyScreen";
 import TermsScreen from "./screens/TermsScreen";
+import ProfileScreen from "./screens/ProfileScreen";
+import AdminScreen from "./screens/AdminScreen";
+import DiagnosticsScreen from "./screens/admin/DiagnosticsScreen";
+import GpsDebugScreen from "./screens/admin/GpsDebugScreen";
+import GtfsImportScreen from "./screens/admin/GtfsImportScreen";
+import LogsScreen from "./screens/admin/LogsScreen";
 
 type Screen =
   | "splash" | "consent" | "wallet" | "map" | "route"
   | "route-nearby-lines" | "route-nearby-stations"
-  | "nfc-diagnostic" | "about" | "privacy" | "terms";
+  | "nfc-diagnostic" | "about" | "privacy" | "terms"
+  | "profile" | "admin" | "admin-diag" | "admin-gps" | "admin-gtfs" | "admin-logs";
+
 const CONSENT_KEY = "aptransp_consent_v1";
 
 const Index = () => {
@@ -46,6 +54,8 @@ const Index = () => {
             onOpenRoute={() => setScreen("route")}
             onOpenNearby={() => setScreen("route-nearby-lines")}
             onOpenNfcDiagnostic={() => setScreen("nfc-diagnostic")}
+            onOpenProfile={() => setScreen("profile")}
+            onOpenAdmin={() => setScreen("admin")}
           />
         )}
         {screen === "map" && (
@@ -70,6 +80,20 @@ const Index = () => {
         )}
         {screen === "privacy" && <PrivacyPolicyScreen onBack={() => setScreen("about")} />}
         {screen === "terms" && <TermsScreen onBack={() => setScreen("about")} />}
+        {screen === "profile" && <ProfileScreen onBack={() => setScreen("wallet")} />}
+        {screen === "admin" && (
+          <AdminScreen
+            onBack={() => setScreen("wallet")}
+            onDiagnostics={() => setScreen("admin-diag")}
+            onGpsDebug={() => setScreen("admin-gps")}
+            onGtfs={() => setScreen("admin-gtfs")}
+            onLogs={() => setScreen("admin-logs")}
+          />
+        )}
+        {screen === "admin-diag" && <DiagnosticsScreen onBack={() => setScreen("admin")} />}
+        {screen === "admin-gps" && <GpsDebugScreen onBack={() => setScreen("admin")} />}
+        {screen === "admin-gtfs" && <GtfsImportScreen onBack={() => setScreen("admin")} />}
+        {screen === "admin-logs" && <LogsScreen onBack={() => setScreen("admin")} />}
       </div>
     </>
   );

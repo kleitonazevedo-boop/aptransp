@@ -27,6 +27,8 @@ interface Props {
   onOpenRoute: () => void;
   onOpenNearby: () => void;
   onOpenNfcDiagnostic: () => void;
+  onOpenProfile: () => void;
+  onOpenAdmin: () => void;
 }
 
 type CardId = "balance" | "map" | "route" | "alerts" | "favorites";
@@ -38,7 +40,7 @@ interface CardMeta {
   icon: JSX.Element;
 }
 
-const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfcDiagnostic }: Props) => {
+const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfcDiagnostic, onOpenProfile, onOpenAdmin }: Props) => {
   const [balance, setBalance] = useState<number | null>(null);
   const [reading, setReading] = useState(false);
   const [active, setActive] = useState<CardId | null>(null);
@@ -263,6 +265,8 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
           onFavorites={() => setActive("favorites")}
           onAbout={onAbout}
           onNfcDiagnostic={onOpenNfcDiagnostic}
+          onProfile={onOpenProfile}
+          onAdmin={onOpenAdmin}
         />
         <div className="flex items-center gap-2"><Logo className="w-8 h-8" /></div>
         <AlertTriangle className="w-5 h-5 text-brand-yellow" />

@@ -21,6 +21,7 @@ import { historyService, type RouteHistoryItem } from "@/services/historyService
 import { favoritesService, type FavoriteRoute } from "@/services/favoritesService";
 import { profileService } from "@/services/profileService";
 import { sptransService } from "@/services/sptransService";
+import { placesFavoritesService } from "@/services/placesFavoritesService";
 
 interface Props { onBack?: () => void; initialMode?: ContentMode; embedded?: boolean }
 
@@ -205,6 +206,23 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
     await loadFavorites();
   };
 
+  const favPlace = async (which: "origem" | "destino") => {
+    if (!user) { setError("Faça login para favoritar."); return; }
+    const point = which === "origem" ? origin : destination;
+    const text = which === "origem" ? originText : destinationText;
+    if (!text) { setError(`Informe ${which} primeiro.`); return; }
+    const label = prompt(`Nome do favorito (Casa, Trabalho, ...):`, which === "origem" ? "Casa" : "Trabalho");
+    if (!label) return;
+    const kind = label.toLowerCase().includes("casa") ? "casa"
+      : label.toLowerCase().includes("trabalho") ? "trabalho" : "custom";
+    const saved = await placesFavoritesService.add({
+      label, endereco: text,
+      latitude: point?.latitude ?? null, longitude: point?.longitude ?? null,
+      kind,
+    });
+    setInfo(saved ? `${label} salvo nos favoritos.` : "Falha ao salvar.");
+  };
+
   const removeFavorite = async (id?: string) => {
     if (!id) return;
     await favoritesService.remove(id);
@@ -320,6 +338,9 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
               <button onClick={useMyLocation} aria-label="Usar GPS" className="text-amber-700">
                 <Crosshair className="w-4 h-4" />
               </button>
+              <button onClick={() => favPlace("origem")} aria-label="Favoritar origem" className="text-amber-700">
+                <Star className="w-4 h-4" />
+              </button>
             </div>
             {focused === "origin" && originSuggestions.length > 0 && (
               <ul className="absolute z-30 left-0 right-0 top-14 bg-white shadow-lg rounded-xl mt-1 max-h-60 overflow-auto border border-amber-100">
@@ -343,6 +364,9 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
                      className="flex-1 bg-transparent outline-none text-sm text-blue-900 placeholder:text-blue-900/50" />
               <button onClick={swap} aria-label="Inverter" className="text-amber-700">
                 <ArrowLeftRight className="w-4 h-4" />
+              </button>
+              <button onClick={() => favPlace("destino")} aria-label="Favoritar destino" className="text-amber-700">
+                <Star className="w-4 h-4" />
               </button>
             </div>
             {focused === "destination" && destinationSuggestions.length > 0 && (
