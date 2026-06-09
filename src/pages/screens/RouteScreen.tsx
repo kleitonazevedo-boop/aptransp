@@ -206,6 +206,23 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
     await loadFavorites();
   };
 
+  const favPlace = async (which: "origem" | "destino") => {
+    if (!user) { setError("Faça login para favoritar."); return; }
+    const point = which === "origem" ? origin : destination;
+    const text = which === "origem" ? originText : destinationText;
+    if (!text) { setError(`Informe ${which} primeiro.`); return; }
+    const label = prompt(`Nome do favorito (Casa, Trabalho, ...):`, which === "origem" ? "Casa" : "Trabalho");
+    if (!label) return;
+    const kind = label.toLowerCase().includes("casa") ? "casa"
+      : label.toLowerCase().includes("trabalho") ? "trabalho" : "custom";
+    const saved = await placesFavoritesService.add({
+      label, endereco: text,
+      latitude: point?.latitude ?? null, longitude: point?.longitude ?? null,
+      kind,
+    });
+    setInfo(saved ? `${label} salvo nos favoritos.` : "Falha ao salvar.");
+  };
+
   const removeFavorite = async (id?: string) => {
     if (!id) return;
     await favoritesService.remove(id);
