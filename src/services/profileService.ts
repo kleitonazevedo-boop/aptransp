@@ -13,6 +13,12 @@ export interface UserProfile {
   cidade?: string | null;
   estado?: string | null;
   cep?: string | null;
+  avatar_url?: string | null;
+  latitude_residencial?: number | null;
+  longitude_residencial?: number | null;
+  latitude_trabalho?: number | null;
+  longitude_trabalho?: number | null;
+  ultimo_login?: string | null;
 }
 
 export const profileService = {
@@ -35,5 +41,16 @@ export const profileService = {
       .select().single();
     if (error) { console.error("[profile:upsert]", error); return null; }
     return data;
+  },
+
+  async uploadAvatar(file: File): Promise<string | null> {
+    const { data: u } = await supabase.auth.getUser();
+    if (!u.user) return null;
+    const ext = file.name.split(".").pop() || "jpg";
+    const path = `${u.user.id}/avatar.${ext}`;
+    const { error } = await supabase.storage.from("avatars").upload(path, file, { upsert: true, contentType: file.type });
+    if (error) { console.error("[avatar]", error); return null; }
+    const { data } = supabase.storage.from("avatars").getPublicUrl(path);
+    return data.publicUrl;
   },
 };
