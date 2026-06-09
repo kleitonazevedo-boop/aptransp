@@ -21,6 +21,7 @@ import { historyService, type RouteHistoryItem } from "@/services/historyService
 import { favoritesService, type FavoriteRoute } from "@/services/favoritesService";
 import { profileService } from "@/services/profileService";
 import { sptransService } from "@/services/sptransService";
+import { placesFavoritesService } from "@/services/placesFavoritesService";
 
 interface Props { onBack?: () => void; initialMode?: ContentMode; embedded?: boolean }
 
