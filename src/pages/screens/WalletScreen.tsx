@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Logo } from "@/components/Logo";
 import { SideMenu } from "@/components/SideMenu";
+import RouteScreen from "./RouteScreen";
 import {
   AlertTriangle,
   Map as MapIcon,
