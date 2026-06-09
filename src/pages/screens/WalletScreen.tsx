@@ -2,6 +2,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Logo } from "@/components/Logo";
 import { SideMenu } from "@/components/SideMenu";
+import RouteScreen from "./RouteScreen";
 import {
   AlertTriangle,
   Map as MapIcon,
@@ -164,45 +165,8 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
 
     if (id === "route") {
       return (
-        <div className="w-full h-full flex flex-col p-4 gap-3" onClick={(e) => e.stopPropagation()}>
-          <div className="bg-white/95 rounded-2xl p-3 space-y-2 shadow-sm">
-            <div className="flex items-center gap-2 border-b border-amber-200 pb-2">
-              <MapPin className="w-4 h-4 text-amber-700" />
-              <input
-                value={origin}
-                onChange={(e) => setOrigin(e.target.value)}
-                placeholder="De onde você está?"
-                className="flex-1 bg-transparent outline-none text-sm text-blue-900 placeholder:text-blue-900/50"
-              />
-              <button onClick={handleGps} aria-label="Usar GPS" className="text-amber-700">
-                <Crosshair className="w-4 h-4" />
-              </button>
-            </div>
-            <div className="flex items-center gap-2">
-              <MapPin className="w-4 h-4 text-amber-700" />
-              <input
-                value={destination}
-                onChange={(e) => setDestination(e.target.value)}
-                placeholder="Para onde você vai?"
-                className="flex-1 bg-transparent outline-none text-sm text-blue-900 placeholder:text-blue-900/50"
-              />
-              <button onClick={swap} aria-label="Inverter" className="text-amber-700">
-                <ArrowLeftRight className="w-4 h-4" />
-              </button>
-            </div>
-          </div>
-          <div className="grid grid-cols-4 gap-2">
-            <ActionTile icon={<RouteIcon className="w-5 h-5" />} label="Traçar rota" onClick={onOpenRoute} tone="amber" />
-            <ActionTile icon={<Home className="w-5 h-5" />} label="Casa" onClick={() => {}} tone="amber" />
-            <ActionTile icon={<Briefcase className="w-5 h-5" />} label="Trabalho" onClick={() => {}} tone="amber" />
-            <ActionTile icon={<Star className="w-5 h-5" />} label="Favoritos" onClick={() => {}} tone="amber" />
-          </div>
-          <div className="bg-white/95 rounded-2xl p-3 flex-1 overflow-auto">
-            <p className="text-xs font-bold text-blue-900 mb-2">Rotas recentes</p>
-            <RecentRoute name="Casa → Trabalho" time="35 min" />
-            <RecentRoute name="Centro → Terminal" time="42 min" />
-            <RecentRoute name="Trabalho → Casa" time="38 min" />
-          </div>
+        <div className="w-full h-full overflow-hidden" onClick={(e) => e.stopPropagation()}>
+          <RouteScreen embedded />
         </div>
       );
     }

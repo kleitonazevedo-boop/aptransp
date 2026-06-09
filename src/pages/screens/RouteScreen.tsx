@@ -22,7 +22,7 @@ import { favoritesService, type FavoriteRoute } from "@/services/favoritesServic
 import { profileService } from "@/services/profileService";
 import { sptransService } from "@/services/sptransService";
 
-interface Props { onBack: () => void; initialMode?: ContentMode }
+interface Props { onBack?: () => void; initialMode?: ContentMode; embedded?: boolean }
 
 type ContentMode = "default" | "route" | "favorites" | "nearby-lines" | "nearby-stations";
 
@@ -30,7 +30,7 @@ interface SelectedPoint { label: string; latitude: number; longitude: number }
 
 const STATION_TYPES = ["subway_station", "train_station", "light_rail_station"] as const;
 
-const RouteScreen = ({ onBack, initialMode = "default" }: Props) => {
+const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Props) => {
   const { user } = useAuth();
 
   // Form state
@@ -292,17 +292,21 @@ const RouteScreen = ({ onBack, initialMode = "default" }: Props) => {
 
   // ---------- UI
   return (
-    <div className="flex-1 flex flex-col bg-white">
-      <header className="bg-brand-purple text-white px-4 pt-4 pb-3 flex items-center justify-between">
-        <button onClick={onBack} aria-label="Voltar" className="p-1"><ArrowLeft className="w-6 h-6" /></button>
-        <Logo className="w-8 h-8" />
-        <RouteIcon className="w-5 h-5 text-brand-yellow" />
-      </header>
-      <div className="bg-brand-yellow text-blue-900 text-center text-sm font-bold py-2 flex items-center justify-center gap-2">
-        <RouteIcon className="w-4 h-4" /> Traçado de Rota
-      </div>
+    <div className={`flex-1 flex flex-col ${embedded ? "bg-transparent" : "bg-white"}`}>
+      {!embedded && (
+        <>
+          <header className="bg-brand-purple text-white px-4 pt-4 pb-3 flex items-center justify-between">
+            <button onClick={onBack} aria-label="Voltar" className="p-1"><ArrowLeft className="w-6 h-6" /></button>
+            <Logo className="w-8 h-8" />
+            <RouteIcon className="w-5 h-5 text-brand-yellow" />
+          </header>
+          <div className="bg-brand-yellow text-blue-900 text-center text-sm font-bold py-2 flex items-center justify-center gap-2">
+            <RouteIcon className="w-4 h-4" /> Traçado de Rota
+          </div>
+        </>
+      )}
 
-      <div className="flex flex-col overflow-y-auto flex-1 bg-amber-50">
+      <div className={`flex flex-col overflow-y-auto flex-1 ${embedded ? "" : "bg-amber-50"}`}>
         {/* Inputs */}
         <div className="p-3 space-y-3">
           <div className="bg-white rounded-2xl p-3 space-y-2 shadow-sm relative">
