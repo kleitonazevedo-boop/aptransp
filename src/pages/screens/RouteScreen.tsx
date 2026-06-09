@@ -348,6 +348,9 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
               <button onClick={swap} aria-label="Inverter" className="text-amber-700">
                 <ArrowLeftRight className="w-4 h-4" />
               </button>
+              <button onClick={() => favPlace("destino")} aria-label="Favoritar destino" className="text-amber-700">
+                <Star className="w-4 h-4" />
+              </button>
             </div>
             {focused === "destination" && destinationSuggestions.length > 0 && (
               <ul className="absolute z-30 left-0 right-0 top-full bg-white shadow-lg rounded-xl mt-1 max-h-60 overflow-auto border border-amber-100">
