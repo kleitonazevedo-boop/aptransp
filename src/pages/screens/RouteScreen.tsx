@@ -30,7 +30,7 @@ interface SelectedPoint { label: string; latitude: number; longitude: number }
 
 const STATION_TYPES = ["subway_station", "train_station", "light_rail_station"] as const;
 
-const RouteScreen = ({ onBack, initialMode = "default" }: Props) => {
+const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Props) => {
   const { user } = useAuth();
 
   // Form state
