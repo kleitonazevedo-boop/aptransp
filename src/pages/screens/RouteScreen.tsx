@@ -306,7 +306,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
         </>
       )}
 
-      <div className="flex flex-col overflow-y-auto flex-1 bg-amber-50">
+      <div className={`flex flex-col overflow-y-auto flex-1 ${embedded ? "" : "bg-amber-50"}`}>
         {/* Inputs */}
         <div className="p-3 space-y-3">
           <div className="bg-white rounded-2xl p-3 space-y-2 shadow-sm relative">
