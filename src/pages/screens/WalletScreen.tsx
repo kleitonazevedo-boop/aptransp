@@ -27,6 +27,8 @@ interface Props {
   onOpenRoute: () => void;
   onOpenNearby: () => void;
   onOpenNfcDiagnostic: () => void;
+  onOpenProfile: () => void;
+  onOpenAdmin: () => void;
 }
 
 type CardId = "balance" | "map" | "route" | "alerts" | "favorites";
@@ -38,7 +40,7 @@ interface CardMeta {
   icon: JSX.Element;
 }
 
-const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfcDiagnostic }: Props) => {
+const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfcDiagnostic, onOpenProfile, onOpenAdmin }: Props) => {
   const [balance, setBalance] = useState<number | null>(null);
   const [reading, setReading] = useState(false);
   const [active, setActive] = useState<CardId | null>(null);
