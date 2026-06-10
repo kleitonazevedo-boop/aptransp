@@ -30,7 +30,12 @@ async function call<T>(path: string, params: Record<string, string | number> = {
   if (hit && Date.now() - hit.ts < hit.ttl) return hit.data as T;
 
   await take();
-  const res = await fetch(`${FUNCTION_URL}?${key}`);
+  const res = await fetch(`${FUNCTION_URL}?${key}`, {
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+  });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`sptrans ${res.status}: ${text.slice(0, 200)}`);
