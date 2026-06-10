@@ -1,0 +1,7 @@
+project_id = "xitbkklflslcgzqskmml"
+
+[functions.sptrans-proxy]
+verify_jwt = false
+
+[functions.gtfs-import]
+verify_jwt = false
