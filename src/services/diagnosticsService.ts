@@ -1,5 +1,6 @@
 import { supabase } from "@/integrations/supabase/client";
 import { hasGoogleKey, loadGoogleMaps } from "./googleMapsService";
+import { sptransService } from "./sptransService";
 
 export type DiagnosticStatus = "ok" | "fail" | "unknown";
 
