@@ -6,6 +6,7 @@
 
 import { SUPABASE_PROJECT_URL } from "@/integrations/supabase/client";
 
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 const FUNCTION_URL = `${SUPABASE_PROJECT_URL.replace(".supabase.co", ".functions.supabase.co")}/sptrans-proxy`;
 
 interface CacheEntry { ts: number; ttl: number; data: unknown }
@@ -29,7 +30,12 @@ async function call<T>(path: string, params: Record<string, string | number> = {
   if (hit && Date.now() - hit.ts < hit.ttl) return hit.data as T;
 
   await take();
-  const res = await fetch(`${FUNCTION_URL}?${key}`);
+  const res = await fetch(`${FUNCTION_URL}?${key}`, {
+    headers: {
+      apikey: SUPABASE_ANON_KEY,
+      Authorization: `Bearer ${SUPABASE_ANON_KEY}`,
+    },
+  });
   if (!res.ok) {
     const text = await res.text();
     throw new Error(`sptrans ${res.status}: ${text.slice(0, 200)}`);
