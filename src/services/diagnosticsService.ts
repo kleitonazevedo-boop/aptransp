@@ -51,9 +51,9 @@ async function checkSupabase(): Promise<DiagnosticResult> {
 
 async function checkSptrans(): Promise<DiagnosticResult> {
   try {
-    const { data, error } = await supabase.functions.invoke("sptrans-proxy", { body: { action: "ping" } });
-    if (error) return { key: "sptrans", label: "SPTrans", status: "fail", detail: error.message };
-    return { key: "sptrans", label: "SPTrans", status: data?.ok ? "ok" : "fail", detail: JSON.stringify(data) };
+    const lines = await sptransService.searchLines("8000");
+    const ok = Array.isArray(lines);
+    return { key: "sptrans", label: "SPTrans", status: ok ? "ok" : "fail", detail: ok ? `${lines.length} linhas` : "resposta inválida" };
   } catch (e) { return { key: "sptrans", label: "SPTrans", status: "fail", detail: String(e) }; }
 }
 
