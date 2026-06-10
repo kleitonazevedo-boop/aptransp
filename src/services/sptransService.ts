@@ -6,6 +6,7 @@
 
 import { SUPABASE_PROJECT_URL } from "@/integrations/supabase/client";
 
+const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY as string;
 const FUNCTION_URL = `${SUPABASE_PROJECT_URL.replace(".supabase.co", ".functions.supabase.co")}/sptrans-proxy`;
 
 interface CacheEntry { ts: number; ttl: number; data: unknown }
