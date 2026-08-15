@@ -31,11 +31,11 @@ const AdminScreen = ({ onBack, onDiagnostics, onGpsDebug, onGtfs, onLogs }: Prop
         ) : (
           <>
             <Tile icon={<Activity className="w-5 h-5" />} label="Diagnóstico do Sistema"
-                  description="Status de Google, Supabase, SPTrans, GPS" onClick={onDiagnostics} />
+                  description="Banco local, GTFS, Google, GPS e conectividade" onClick={onDiagnostics} />
             <Tile icon={<MapPin className="w-5 h-5" />} label="Debug Geolocalização Android"
                   description="Permissões, GPS, lat/lng, precisão" onClick={onGpsDebug} />
             <Tile icon={<Upload className="w-5 h-5" />} label="Importação SPTrans (GTFS)"
-                  description="Upload e processamento dos arquivos" onClick={onGtfs} />
+                  description="Importa os arquivos direto no banco local" onClick={onGtfs} />
             <Tile icon={<FileText className="w-5 h-5" />} label="Logs do Sistema"
                   description="Erros e eventos registrados" onClick={onLogs} />
           </>

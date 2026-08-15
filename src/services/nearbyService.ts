@@ -1,6 +1,9 @@
-import { searchNearbyTransit, type NearbyPlace } from "./placesService";
-import { databaseService } from "./databaseService";
-import { haversine } from "./locationService";
+/**
+ * Paradas e linhas próximas — 100% OFFLINE via GTFS local (SQLite).
+ * Nenhuma chamada de rede é feita aqui.
+ */
+import { gtfsRepository, type NearbyStop } from "@/repositories/gtfsRepository";
+import { databaseService, type DbLine } from "./databaseService";
 
 export interface NearbyLine {
   id: string;
@@ -10,73 +13,30 @@ export interface NearbyLine {
   origin: string;
   destination: string;
   distanceMeters: number;
-  closestStop?: NearbyPlace;
+  stopName?: string;
 }
 
-const CACHE_KEY = "aptransp_nearby_cache_v1";
-const CACHE_TTL_MS = 15 * 60 * 1000;
-
-interface CacheShape {
-  ts: number;
-  lat: number;
-  lng: number;
-  places: NearbyPlace[];
+export interface NearbyResult {
+  stops: NearbyStop[];
   lines: NearbyLine[];
+  hasGtfs: boolean;
 }
 
-function loadCache(): CacheShape | null {
-  try {
-    const raw = localStorage.getItem(CACHE_KEY);
-    if (!raw) return null;
-    const parsed = JSON.parse(raw) as CacheShape;
-    if (Date.now() - parsed.ts > CACHE_TTL_MS) return null;
-    return parsed;
-  } catch {
-    return null;
-  }
+export async function findNearby(lat: number, lng: number, radius = 1000): Promise<NearbyResult> {
+  const hasGtfs = await gtfsRepository.hasData();
+  if (!hasGtfs) return { stops: [], lines: [], hasGtfs: false };
+
+  const [stops, lines] = await Promise.all([
+    gtfsRepository.nearbyStops(lat, lng, radius),
+    databaseService.linesNear(lat, lng, radius),
+  ]);
+  return { stops, lines: lines as DbLine[], hasGtfs: true };
 }
 
-function saveCache(c: CacheShape) {
-  try {
-    localStorage.setItem(CACHE_KEY, JSON.stringify(c));
-  } catch {
-    /* ignore */
-  }
+export async function findNearbyStops(lat: number, lng: number, radius = 1500) {
+  return gtfsRepository.nearbyStops(lat, lng, radius);
 }
 
-export async function findNearby(
-  lat: number,
-  lng: number,
-  radius = 1000,
-): Promise<{ places: NearbyPlace[]; lines: NearbyLine[]; fromCache: boolean }> {
-  const cached = loadCache();
-  if (cached && haversine({ latitude: cached.lat, longitude: cached.lng }, { latitude: lat, longitude: lng }) < 100) {
-    return { ...cached, fromCache: true };
-  }
-
-  const places = await searchNearbyTransit({ lat, lng }, radius);
-
-  // Cache de locais no Supabase (best-effort)
-  databaseService.upsertTransportLocations(places).catch(() => {});
-
-  // Buscar linhas que param em algum dos placeIds
-  const lines = await databaseService.linesNearPlaces(places.map((p) => p.id));
-  const enriched: NearbyLine[] = lines.map((l) => {
-    const stop = places.find((p) => p.id === l.closestPlaceId);
-    return {
-      id: l.id,
-      lineCode: l.lineCode,
-      lineName: l.lineName,
-      transportType: l.transportType,
-      origin: l.origin,
-      destination: l.destination,
-      distanceMeters: stop?.distanceMeters ?? 0,
-      closestStop: stop,
-    };
-  });
-  enriched.sort((a, b) => a.distanceMeters - b.distanceMeters);
-
-  const next: CacheShape = { ts: Date.now(), lat, lng, places, lines: enriched };
-  saveCache(next);
-  return { places, lines: enriched, fromCache: false };
+export async function nextDepartures(stopId: string) {
+  return gtfsRepository.nextDepartures(stopId);
 }

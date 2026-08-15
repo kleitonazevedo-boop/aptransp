@@ -24,7 +24,7 @@ const LogsScreen = ({ onBack }: Props) => {
       <div className="bg-brand-yellow text-blue-900 text-center text-sm font-bold py-2">Logs do Sistema</div>
 
       <div className="bg-amber-100 px-3 py-2 flex gap-2 overflow-x-auto">
-        {["all", "google", "gps", "supabase", "sptrans", "gtfs", "app"].map((s) => (
+        {["all", "google", "gps", "database", "gtfs", "app"].map((s) => (
           <button key={s} onClick={() => setFilter(s)}
                   className={`shrink-0 px-3 py-1 rounded-full text-xs font-semibold ${
                     filter === s ? "bg-brand-purple text-white" : "bg-white text-blue-900"

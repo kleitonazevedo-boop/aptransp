@@ -7,7 +7,6 @@ import {
 import { Logo } from "@/components/Logo";
 import {
   autocompletePlaces, placeDetails, type AutocompleteSuggestion,
-  searchNearbyTransit, type NearbyPlace,
 } from "@/services/placesService";
 import { reverseGeocode } from "@/services/geocodingService";
 import { getCurrentLocation } from "@/services/locationService";
@@ -20,16 +19,17 @@ import { useAuth } from "@/hooks/useAuth";
 import { historyService, type RouteHistoryItem } from "@/services/historyService";
 import { favoritesService, type FavoriteRoute } from "@/services/favoritesService";
 import { profileService } from "@/services/profileService";
-import { sptransService } from "@/services/sptransService";
 import { placesFavoritesService } from "@/services/placesFavoritesService";
+import { connectivityService } from "@/services/connectivityService";
+import {
+  gtfsRepository, type NearbyStop, type NearbyGtfsLine,
+} from "@/repositories/gtfsRepository";
 
 interface Props { onBack?: () => void; initialMode?: ContentMode; embedded?: boolean }
 
 type ContentMode = "default" | "route" | "favorites" | "nearby-lines" | "nearby-stations";
 
 interface SelectedPoint { label: string; latitude: number; longitude: number }
-
-const STATION_TYPES = ["subway_station", "train_station", "light_rail_station"] as const;
 
 const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Props) => {
   const { user } = useAuth();
@@ -50,8 +50,9 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   const [selectedRouteIdx, setSelectedRouteIdx] = useState(0);
   const [recent, setRecent] = useState<RouteHistoryItem[]>([]);
   const [favorites, setFavorites] = useState<FavoriteRoute[]>([]);
-  const [nearbyBuses, setNearbyBuses] = useState<NearbyPlace[]>([]);
-  const [nearbyStations, setNearbyStations] = useState<NearbyPlace[]>([]);
+  const [nearbyLines, setNearbyLines] = useState<NearbyGtfsLine[]>([]);
+  const [nearbyStops, setNearbyStops] = useState<NearbyStop[]>([]);
+  const [gtfsMissing, setGtfsMissing] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -139,6 +140,10 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
     setError(null); setInfo(null);
     if (!origin && !originText) { setError("Informe a origem."); return; }
     if (!destination && !destinationText) { setError("Informe o destino."); return; }
+    if (!connectivityService.isOnline()) {
+      setError("Sem conexão. O traçado de rotas exige internet — paradas e linhas próximas funcionam offline.");
+      return;
+    }
     setLoading(true); setRoutes([]); setContentMode("route");
     try {
       const o = origin ? { lat: origin.latitude, lng: origin.longitude } : originText;
@@ -246,14 +251,20 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
     setInfo(saved ? "Adicionada aos favoritos." : "Não foi possível salvar.");
   };
 
-  // ---------- Nearby
+  // ---------- Nearby (OFFLINE: GTFS local)
   const loadNearbyBuses = async () => {
     setError(null); setLoading(true); setContentMode("nearby-lines");
     try {
       const loc = await getCurrentLocation();
-      const places = await searchNearbyTransit({ lat: loc.latitude, lng: loc.longitude }, 800, ["bus_station"]);
-      setNearbyBuses(places);
-      drawNearbyMarkers(places, loc);
+      const hasGtfs = await gtfsRepository.hasData();
+      setGtfsMissing(!hasGtfs);
+      if (!hasGtfs) { setNearbyLines([]); return; }
+      const [lines, stops] = await Promise.all([
+        gtfsRepository.nearbyLines(loc.latitude, loc.longitude, 1000),
+        gtfsRepository.nearbyStops(loc.latitude, loc.longitude, 1000),
+      ]);
+      setNearbyLines(lines);
+      void drawNearbyMarkers(stops, loc);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao buscar linhas próximas.");
     } finally { setLoading(false); }
@@ -263,21 +274,21 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
     setError(null); setLoading(true); setContentMode("nearby-stations");
     try {
       const loc = await getCurrentLocation();
-      // searchNearbyTransit aceita lista de includedPrimaryTypes
-      const places = await searchNearbyTransit(
-        { lat: loc.latitude, lng: loc.longitude }, 1500,
-        [...STATION_TYPES] as unknown as ("subway_station" | "train_station")[],
-      );
-      // garante exclusão de qualquer bus_station residual
-      const filtered = places.filter((p) => !p.type?.includes("bus"));
-      setNearbyStations(filtered);
-      drawNearbyMarkers(filtered, loc);
+      const hasGtfs = await gtfsRepository.hasData();
+      setGtfsMissing(!hasGtfs);
+      if (!hasGtfs) { setNearbyStops([]); return; }
+      const stops = await gtfsRepository.nearbyStops(loc.latitude, loc.longitude, 1500);
+      setNearbyStops(stops);
+      void drawNearbyMarkers(stops, loc);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Falha ao buscar estações próximas.");
     } finally { setLoading(false); }
   };
 
-  const drawNearbyMarkers = async (places: NearbyPlace[], center: { latitude: number; longitude: number }) => {
+  const drawNearbyMarkers = async (
+    stops: NearbyStop[],
+    center: { latitude: number; longitude: number },
+  ) => {
     const map = mapInstance.current; if (!map) return;
     const maps = await loadGoogleMaps();
     polylineRef.current?.setMap(null);
@@ -289,12 +300,12 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
       icon: { path: maps.SymbolPath.CIRCLE, scale: 8, fillColor: "#7c3aed", fillOpacity: 1, strokeColor: "white", strokeWeight: 2 },
     }));
     const bounds = new maps.LatLngBounds({ lat: center.latitude, lng: center.longitude });
-    places.forEach((p) => {
-      const pos = { lat: p.latitude, lng: p.longitude };
-      markersRef.current.push(new maps.Marker({ position: pos, map }));
+    stops.forEach((s) => {
+      const pos = { lat: Number(s.stop_lat), lng: Number(s.stop_lon) };
+      markersRef.current.push(new maps.Marker({ position: pos, map, title: s.stop_name }));
       bounds.extend(pos);
     });
-    if (places.length) map.fitBounds(bounds);
+    if (stops.length) map.fitBounds(bounds);
     else map.setCenter({ lat: center.latitude, lng: center.longitude });
   };
 
@@ -537,46 +548,52 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
                 </p>
                 <button onClick={() => setContentMode("default")} className="text-blue-900/60"><X className="w-4 h-4" /></button>
               </div>
-              {nearbyBuses.length === 0 ? (
-                <p className="text-xs text-blue-900/60 py-3 text-center">Nenhum ponto de ônibus próximo.</p>
+              {nearbyLines.length === 0 ? (
+                <p className="text-xs text-blue-900/60 py-3 text-center">
+                  {gtfsMissing ? "Base GTFS não importada. Vá em Administrador → Importação SPTrans (GTFS)."
+                               : "Nenhuma linha próxima na base offline."}
+                </p>
               ) : (
                 <ul className="divide-y divide-amber-100">
-                  {nearbyBuses.map((p) => (
-                    <li key={p.id} className="py-2">
-                      <p className="text-sm font-medium text-blue-900">{p.name}</p>
-                      <p className="text-[11px] text-blue-900/60">{p.address}</p>
+                  {nearbyLines.map((l) => (
+                    <li key={l.route_id} className="py-2">
+                      <p className="text-sm font-medium text-blue-900">
+                        {l.route_short_name} · {l.route_long_name}
+                      </p>
                       <p className="text-[11px] text-blue-900/60">
-                        {p.distanceMeters ? `${Math.round(p.distanceMeters)} m` : ""}
+                        Parada: {l.stop_name} · {Math.round(l.distanceMeters)} m
                       </p>
                     </li>
                   ))}
                 </ul>
               )}
               <p className="text-[10px] text-blue-900/50 mt-2 text-center">
-                Previsão de chegada disponível após deploy da função sptrans-proxy.
+                Dados offline do GTFS local (aptransp.db).
               </p>
             </div>
           )}
 
-          {/* Modo: nearby-stations (sem ônibus) */}
+          {/* Modo: nearby-stations (paradas GTFS) */}
           {contentMode === "nearby-stations" && (
             <div className="bg-white rounded-2xl p-3 shadow-sm">
               <div className="flex items-center justify-between mb-2">
                 <p className="text-xs font-bold text-blue-900 flex items-center gap-2">
-                  <Train className="w-4 h-4" /> Estações próximas
+                  <Train className="w-4 h-4" /> Paradas e estações próximas
                 </p>
                 <button onClick={() => setContentMode("default")} className="text-blue-900/60"><X className="w-4 h-4" /></button>
               </div>
-              {nearbyStations.length === 0 ? (
-                <p className="text-xs text-blue-900/60 py-3 text-center">Nenhuma estação no raio de 1.5 km.</p>
+              {nearbyStops.length === 0 ? (
+                <p className="text-xs text-blue-900/60 py-3 text-center">
+                  {gtfsMissing ? "Base GTFS não importada. Vá em Administrador → Importação SPTrans (GTFS)."
+                               : "Nenhuma parada no raio de 1.5 km."}
+                </p>
               ) : (
                 <ul className="divide-y divide-amber-100">
-                  {nearbyStations.map((p) => (
-                    <li key={p.id} className="py-2">
-                      <p className="text-sm font-medium text-blue-900">{p.name}</p>
-                      <p className="text-[11px] text-blue-900/60">{p.address}</p>
+                  {nearbyStops.map((s) => (
+                    <li key={s.stop_id} className="py-2">
+                      <p className="text-sm font-medium text-blue-900">{s.stop_name}</p>
                       <p className="text-[11px] text-blue-900/60">
-                        {p.type.replace("_", " ")} · {p.distanceMeters ? `${Math.round(p.distanceMeters)} m` : ""}
+                        #{s.stop_id} · {Math.round(s.distanceMeters)} m
                       </p>
                     </li>
                   ))}
@@ -626,4 +643,3 @@ const ModeBtn = ({ active, onClick, icon, label }: { active: boolean; onClick: (
 
 export default RouteScreen;
 // referência mantida para evitar tree-shake do service usado por implementações futuras
-void sptransService;
