@@ -1,6 +1,7 @@
-import { supabase } from "@/integrations/supabase/client";
 import { hasGoogleKey, loadGoogleMaps } from "./googleMapsService";
-import { sptransService } from "./sptransService";
+import { connectivityService } from "./connectivityService";
+import { getDb } from "@/database/database";
+import { gtfsRepository } from "@/repositories/gtfsRepository";
 
 export type DiagnosticStatus = "ok" | "fail" | "unknown";
 
@@ -11,51 +12,46 @@ export interface DiagnosticResult {
   detail?: string;
 }
 
+async function checkConnectivity(): Promise<DiagnosticResult> {
+  const online = connectivityService.isOnline();
+  return {
+    key: "net", label: "Conectividade", status: "ok",
+    detail: online ? "ONLINE" : "OFFLINE (modo local)",
+  };
+}
+
+async function checkLocalDb(): Promise<DiagnosticResult> {
+  try {
+    const db = await getDb();
+    const row = await db.one<{ n: number }>("SELECT COUNT(*) AS n FROM sqlite_master WHERE type = 'table';");
+    return { key: "sqlite", label: "Banco local (aptransp.db)", status: "ok", detail: `${row?.n ?? 0} tabelas` };
+  } catch (e) {
+    return { key: "sqlite", label: "Banco local (aptransp.db)", status: "fail", detail: String(e) };
+  }
+}
+
+async function checkGtfs(): Promise<DiagnosticResult> {
+  try {
+    const counts = await gtfsRepository.counts();
+    const stops = counts.gtfs_stops ?? 0;
+    const routes = counts.gtfs_routes ?? 0;
+    return {
+      key: "gtfs", label: "Base GTFS offline",
+      status: stops > 0 ? "ok" : "fail",
+      detail: stops > 0 ? `${stops} paradas · ${routes} linhas` : "Importe os arquivos GTFS",
+    };
+  } catch (e) {
+    return { key: "gtfs", label: "Base GTFS offline", status: "fail", detail: String(e) };
+  }
+}
+
 async function checkGoogleMaps(): Promise<DiagnosticResult> {
+  if (!connectivityService.isOnline()) {
+    return { key: "maps", label: "Google Maps", status: "unknown", detail: "Offline" };
+  }
   if (!hasGoogleKey()) return { key: "maps", label: "Google Maps", status: "fail", detail: "Sem VITE key" };
   try { await loadGoogleMaps(); return { key: "maps", label: "Google Maps", status: "ok" }; }
   catch (e) { return { key: "maps", label: "Google Maps", status: "fail", detail: String(e) }; }
-}
-
-async function checkPlaces(): Promise<DiagnosticResult> {
-  try {
-    const url = "https://connector-gateway.lovable.dev/google_maps/places/v1/places:searchText";
-    const apiKey = import.meta.env.VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_API_KEY;
-    const lov = import.meta.env.VITE_LOVABLE_API_KEY;
-    if (!apiKey || !lov) return { key: "places", label: "Places API", status: "unknown", detail: "Gateway via backend" };
-    const r = await fetch(url, {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${lov}`, "X-Connection-Api-Key": apiKey,
-        "Content-Type": "application/json", "X-Goog-FieldMask": "places.id",
-      },
-      body: JSON.stringify({ textQuery: "Sé, São Paulo" }),
-    });
-    return { key: "places", label: "Places API", status: r.ok ? "ok" : "fail", detail: `HTTP ${r.status}` };
-  } catch (e) { return { key: "places", label: "Places API", status: "fail", detail: String(e) }; }
-}
-
-async function checkRoutes(): Promise<DiagnosticResult> {
-  return { key: "routes", label: "Routes API", status: "unknown", detail: "Validado em /traçar rota" };
-}
-
-async function checkGeocoding(): Promise<DiagnosticResult> {
-  return { key: "geocoding", label: "Geocoding API", status: "unknown", detail: "Validado em /GPS" };
-}
-
-async function checkSupabase(): Promise<DiagnosticResult> {
-  try {
-    const { error } = await supabase.from("user_profile").select("id").limit(1);
-    return { key: "supabase", label: "Supabase", status: error ? "fail" : "ok", detail: error?.message };
-  } catch (e) { return { key: "supabase", label: "Supabase", status: "fail", detail: String(e) }; }
-}
-
-async function checkSptrans(): Promise<DiagnosticResult> {
-  try {
-    const lines = await sptransService.searchLines("8000");
-    const ok = Array.isArray(lines);
-    return { key: "sptrans", label: "SPTrans", status: ok ? "ok" : "fail", detail: ok ? `${lines.length} linhas` : "resposta inválida" };
-  } catch (e) { return { key: "sptrans", label: "SPTrans", status: "fail", detail: String(e) }; }
 }
 
 async function checkGps(): Promise<DiagnosticResult> {
@@ -81,8 +77,8 @@ async function checkAndroidPerms(): Promise<DiagnosticResult> {
 export const diagnosticsService = {
   async runAll(): Promise<DiagnosticResult[]> {
     return Promise.all([
-      checkGoogleMaps(), checkPlaces(), checkRoutes(), checkGeocoding(),
-      checkSupabase(), checkSptrans(), checkGps(), checkAndroidPerms(),
+      checkConnectivity(), checkLocalDb(), checkGtfs(),
+      checkGoogleMaps(), checkGps(), checkAndroidPerms(),
     ]);
   },
 };

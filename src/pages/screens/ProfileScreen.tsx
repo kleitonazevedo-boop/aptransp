@@ -31,7 +31,7 @@ const ProfileScreen = ({ onBack }: Props) => {
     setSaving(true); setError(null); setInfo(null);
     const saved = await profileService.upsertMyProfile(profile);
     if (saved) { setProfile(saved); setInfo("Perfil salvo."); void logger.info("app", "Profile saved"); }
-    else { setError("Não foi possível salvar."); void logger.error("supabase", "Profile save failed"); }
+    else { setError("Não foi possível salvar."); void logger.error("database", "Profile save failed"); }
     setSaving(false);
   };
 

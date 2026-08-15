@@ -1,32 +1,23 @@
-import { supabase } from "@/integrations/supabase/client";
+import { historyRepository, type LocalHistoryItem } from "@/repositories/historyRepository";
 
-export interface RouteHistoryItem {
-  id?: string;
-  user_id?: string;
-  origem: string;
-  destino: string;
-  modo_transporte: string;
-  distancia?: number | null;
-  tempo_estimado?: number | null;
-  created_at?: string;
-}
+export type RouteHistoryItem = LocalHistoryItem;
 
 export const historyService = {
   async push(h: Omit<RouteHistoryItem, "id" | "user_id" | "created_at">): Promise<void> {
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return;
-    const { error } = await supabase.from("route_history").insert({ ...h, user_id: u.user.id });
-    if (error) console.error("[history:push]", error);
+    try { await historyRepository.push(h); }
+    catch (e) { console.error("[history:push]", e); }
   },
 
   async listRecent(limit = 5): Promise<RouteHistoryItem[]> {
-    const { data: u } = await supabase.auth.getUser();
-    if (!u.user) return [];
-    const { data, error } = await supabase
-      .from("route_history").select("*")
-      .eq("user_id", u.user.id)
-      .order("created_at", { ascending: false }).limit(limit);
-    if (error) { console.error("[history:list]", error); return []; }
-    return data ?? [];
+    try { return await historyRepository.listRecent(limit); }
+    catch (e) { console.error("[history:list]", e); return []; }
+  },
+
+  async remove(id: string): Promise<void> {
+    try { await historyRepository.remove(id); } catch (e) { console.error("[history:rm]", e); }
+  },
+
+  async clear(): Promise<void> {
+    try { await historyRepository.clear(); } catch (e) { console.error("[history:clear]", e); }
   },
 };

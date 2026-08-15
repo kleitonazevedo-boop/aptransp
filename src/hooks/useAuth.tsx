@@ -1,40 +1,58 @@
-import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import type { Session, User } from "@supabase/supabase-js";
-import { supabase } from "@/integrations/supabase/client";
+import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
+import { getDb, LOCAL_USER_ID } from "@/database/database";
+import { userRepository, type LocalUserProfile } from "@/repositories/userRepository";
+
+/**
+ * Sessão local: não existe autenticação remota.
+ * O app opera sempre com o usuário local padrão persistido no SQLite.
+ */
+export interface LocalUser {
+  id: string;
+  email?: string | null;
+  nome?: string | null;
+}
 
 interface AuthContextValue {
-  user: User | null;
-  session: Session | null;
+  user: LocalUser | null;
+  profile: LocalUserProfile | null;
   loading: boolean;
+  refresh: () => Promise<void>;
   signOut: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextValue>({
-  user: null, session: null, loading: true, signOut: async () => {},
+  user: null, profile: null, loading: true, refresh: async () => {}, signOut: async () => {},
 });
 
 export function AuthProvider({ children }: { children: ReactNode }) {
-  const [session, setSession] = useState<Session | null>(null);
-  const [user, setUser] = useState<User | null>(null);
+  const [profile, setProfile] = useState<LocalUserProfile | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    const { data: sub } = supabase.auth.onAuthStateChange((_event, s) => {
-      setSession(s);
-      setUser(s?.user ?? null);
-    });
-    supabase.auth.getSession().then(({ data }) => {
-      setSession(data.session);
-      setUser(data.session?.user ?? null);
+  const refresh = useCallback(async () => {
+    try {
+      await getDb();
+      const p = await userRepository.get();
+      await userRepository.touchLogin();
+      setProfile(p);
+    } catch (e) {
+      console.error("[auth] banco local indisponível", e);
+      setProfile({ id: LOCAL_USER_ID, nome: "Usuário Local", is_admin: 1 });
+    } finally {
       setLoading(false);
-    });
-    return () => sub.subscription.unsubscribe();
+    }
   }, []);
 
-  const signOut = async () => { await supabase.auth.signOut(); };
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  // Sem login remoto: "sair" apenas recarrega o perfil local.
+  const signOut = async () => { await refresh(); };
+
+  const user: LocalUser | null = profile
+    ? { id: profile.id, email: profile.email ?? null, nome: profile.nome ?? null }
+    : null;
 
   return (
-    <AuthContext.Provider value={{ user, session, loading, signOut }}>
+    <AuthContext.Provider value={{ user, profile, loading, refresh, signOut }}>
       {children}
     </AuthContext.Provider>
   );
