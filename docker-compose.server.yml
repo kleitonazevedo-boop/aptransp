@@ -1,0 +1,25 @@
+services:
+  aptransp-api:
+    build:
+      context: .
+      dockerfile: Dockerfile.api
+    container_name: aptransp-api
+    restart: unless-stopped
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_HOST: postgres
+      DATABASE_PORT: 5432
+      DATABASE_NAME: aptransp
+      DATABASE_USER: aptransp_app
+      DATABASE_PASSWORD: ${APTRANSP_DB_PASSWORD}
+      DATABASE_POOL_MAX: 10
+    ports:
+      - "3000:3000"
+    networks:
+      - database_network
+
+networks:
+  database_network:
+    external: true
+    name: database_network
