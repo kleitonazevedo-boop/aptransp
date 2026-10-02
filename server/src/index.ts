@@ -2,6 +2,7 @@ import "dotenv/config";
 import cors from "cors";
 import express from "express";
 import { checkDatabase, pool } from "./db.js";
+import { gtfsRouter } from "./routes/gtfs.js";
 
 const app = express();
 const port = Number(process.env.PORT ?? 3000);
@@ -17,6 +18,8 @@ app.get("/health", (_req, res) => {
     timestamp: new Date().toISOString(),
   });
 });
+
+app.use("/api/v1/gtfs", gtfsRouter);
 
 app.get("/health/database", async (_req, res) => {
   try {
