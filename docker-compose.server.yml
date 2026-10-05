@@ -14,10 +14,16 @@ services:
       DATABASE_USER: aptransp_app
       DATABASE_PASSWORD: ${APTRANSP_DB_PASSWORD}
       DATABASE_POOL_MAX: 10
+      GTFS_SNAPSHOT_DIR: /app/data/gtfs
     ports:
       - "3000:3000"
+    volumes:
+      - aptransp_gtfs_data:/app/data
     networks:
       - database_network
+
+volumes:
+  aptransp_gtfs_data:
 
 networks:
   database_network:
