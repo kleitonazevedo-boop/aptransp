@@ -215,7 +215,10 @@ gtfsRouter.post("/publish", async (req,res)=>{
     if(!candidate.rows[0]) { await client.query("ROLLBACK"); return res.status(404).json({status:"error",message:"Nenhuma versão GTFS pronta para publicação"}); }
     const row=candidate.rows[0];
     try { await stat(snapshotPath(row.version)); } catch { await client.query("ROLLBACK"); return res.status(409).json({status:"error",message:"Snapshot da versão não encontrado. Reimporte o pacote GTFS com a API atual antes de publicar.",version:row.version}); }
-    await client.query(`UPDATE gtfs_versions SET status='archived' WHERE status='published' AND id<>$1`,[row.id]);
+    // O schema atual aceita apenas os estados já definidos pelo banco (ex.: ready/published).
+    // Em vez de usar um novo status "archived", a versão publicada anterior volta para "ready".
+    // O endpoint /version considera somente status=published, preservando uma única versão ativa.
+    await client.query(`UPDATE gtfs_versions SET status='ready',published_at=NULL WHERE status='published' AND id<>$1`,[row.id]);
     await client.query(`UPDATE gtfs_versions SET status='published',published_at=NOW() WHERE id=$1`,[row.id]);
     await client.query("COMMIT");
     return res.json({status:"ok",version:row.version,versionStatus:"published",totalRecords:Number(row.total_records??0),publishedAt:new Date().toISOString()});
