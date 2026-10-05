@@ -44,6 +44,20 @@ export interface GtfsImportRow {
   updated_at?: string;
 }
 
+export interface GtfsSyncMetadata {
+  id: number;
+  version?: string | null;
+  published_at?: string | null;
+  total_records: number;
+  package_sha256?: string | null;
+  package_size_bytes?: number | null;
+  status: "idle" | "checking" | "downloading" | "importing" | "ready" | "error";
+  last_checked_at?: string | null;
+  last_synced_at?: string | null;
+  error_message?: string | null;
+  updated_at?: string | null;
+}
+
 export interface NearbyStop {
   stop_id: string;
   stop_name: string;
@@ -94,6 +108,50 @@ function haversineMeters(aLat: number, aLon: number, bLat: number, bLon: number)
 const CHUNK = 400;
 
 export const gtfsRepository = {
+  async getSyncMetadata(): Promise<GtfsSyncMetadata | null> {
+    const db = await getDb();
+    return db.one<GtfsSyncMetadata>("SELECT * FROM gtfs_sync_metadata WHERE id = 1;");
+  },
+
+  async setSyncStatus(
+    status: GtfsSyncMetadata["status"],
+    errorMessage: string | null = null,
+  ): Promise<void> {
+    const db = await getDb();
+    await db.run(
+      `UPDATE gtfs_sync_metadata
+          SET status = ?, error_message = ?, updated_at = datetime('now')
+        WHERE id = 1;`,
+      [status, errorMessage],
+    );
+  },
+
+  async markSyncChecked(): Promise<void> {
+    const db = await getDb();
+    await db.run(
+      "UPDATE gtfs_sync_metadata SET last_checked_at = datetime('now'), updated_at = datetime('now') WHERE id = 1;",
+    );
+  },
+
+  async activateSyncVersion(meta: {
+    version: string;
+    publishedAt: string | null;
+    totalRecords: number;
+    sha256: string;
+    sizeBytes: number;
+  }): Promise<void> {
+    const db = await getDb();
+    await db.run(
+      `UPDATE gtfs_sync_metadata
+          SET version = ?, published_at = ?, total_records = ?,
+              package_sha256 = ?, package_size_bytes = ?, status = 'ready',
+              last_checked_at = datetime('now'), last_synced_at = datetime('now'),
+              error_message = NULL, updated_at = datetime('now')
+        WHERE id = 1;`,
+      [meta.version, meta.publishedAt, meta.totalRecords, meta.sha256, meta.sizeBytes],
+    );
+  },
+
   async listImports(): Promise<GtfsImportRow[]> {
     const db = await getDb();
     return db.all<GtfsImportRow>("SELECT * FROM gtfs_imports ORDER BY created_at DESC, rowid DESC LIMIT 50;");
