@@ -2,6 +2,7 @@
  * Importação GTFS 100% local: os arquivos .txt são lidos no dispositivo
  * e gravados diretamente no SQLite (aptransp.db). Sem upload.
  */
+import { unzipSync, strFromU8 } from "fflate";
 import { gtfsRepository, GTFS_FILES, type GtfsImportRow, type GtfsFileName, type GtfsSyncMetadata } from "@/repositories/gtfsRepository";
 
 export { GTFS_FILES };
@@ -70,6 +71,65 @@ export const gtfsService = {
       throw e;
     }
   },
+  async syncPublishedPackage(
+    onProgress?: (stage: string, detail?: string) => void,
+  ): Promise<{ updated: boolean; version: string }> {
+    const { manifest, updateAvailable } = await this.checkRemoteVersion();
+    if (!updateAvailable) return { updated: false, version: manifest.version };
+
+    try {
+      await gtfsRepository.setSyncStatus("downloading");
+      onProgress?.("downloading", manifest.version);
+
+      const response = await fetch(manifest.package.url, { cache: "no-store" });
+      if (!response.ok) throw new Error(`Download GTFS falhou (HTTP ${response.status})`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      if (bytes.byteLength !== manifest.package.sizeBytes) {
+        throw new Error(`Tamanho do pacote inválido: esperado ${manifest.package.sizeBytes}, recebido ${bytes.byteLength}`);
+      }
+
+      onProgress?.("validating", "SHA-256");
+      if (!globalThis.crypto?.subtle) throw new Error("SHA-256 indisponível neste dispositivo");
+      const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+      const sha256 = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
+      if (sha256.toLowerCase() !== manifest.package.sha256.toLowerCase()) {
+        throw new Error("SHA-256 do pacote GTFS não confere");
+      }
+
+      onProgress?.("extracting", manifest.version);
+      const zip = unzipSync(bytes);
+      const files: Partial<Record<GtfsFileName, string>> = {};
+      for (const name of GTFS_FILES) {
+        const entry = zip[name];
+        if (entry) files[name] = strFromU8(entry);
+      }
+
+      await gtfsRepository.setSyncStatus("importing");
+      onProgress?.("importing", manifest.version);
+      const counts = await gtfsRepository.importPackageAtomic(files, (file, done, total) => {
+        onProgress?.("importing", `${file}: ${done}/${total}`);
+      });
+      const importedTotal = Object.values(counts).reduce((sum, n) => sum + n, 0);
+      if (importedTotal !== manifest.totalRecords) {
+        throw new Error(`Total GTFS divergente: manifesto ${manifest.totalRecords}, importado ${importedTotal}`);
+      }
+
+      await gtfsRepository.activateSyncVersion({
+        version: manifest.version,
+        publishedAt: manifest.publishedAt,
+        totalRecords: manifest.totalRecords,
+        sha256: manifest.package.sha256,
+        sizeBytes: manifest.package.sizeBytes,
+      });
+      onProgress?.("ready", manifest.version);
+      return { updated: true, version: manifest.version };
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      await gtfsRepository.setSyncStatus("error", message);
+      throw e;
+    }
+  },
+
   async listImports(): Promise<GtfsImport[]> {
     try { return await gtfsRepository.listImports(); }
     catch (e) { console.error("[gtfs:list]", e); return []; }
