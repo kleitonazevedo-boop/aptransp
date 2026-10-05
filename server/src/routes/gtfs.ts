@@ -1,7 +1,11 @@
 import { Router } from "express";
 import multer from "multer";
 import { parse } from "csv-parse/sync";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
+import { createReadStream, createWriteStream } from "node:fs";
+import { mkdir, stat, unlink } from "node:fs/promises";
+import path from "node:path";
+import archiver from "archiver";
 import { pool } from "../db.js";
 
 export const gtfsRouter = Router();
@@ -27,6 +31,37 @@ const IMPORT_MAP: Record<string, { table: string; columns: string[] }> = {
 };
 
 const REQUIRED_PACKAGE_FILES = ["agency.txt","routes.txt","stops.txt","trips.txt","stop_times.txt"] as const;
+const SNAPSHOT_DIR = process.env.GTFS_SNAPSHOT_DIR ?? "/app/data/gtfs";
+
+function snapshotPath(version: string) {
+  return path.join(SNAPSHOT_DIR, `gtfs-${version}.zip`);
+}
+
+async function createSnapshot(version: string, files: Express.Multer.File[]) {
+  await mkdir(SNAPSHOT_DIR, { recursive: true });
+  const target = snapshotPath(version);
+  await new Promise<void>((resolve, reject) => {
+    const output = createWriteStream(target, { flags: "wx" });
+    const archive = archiver("zip", { zlib: { level: 6 } });
+    output.on("close", resolve);
+    output.on("error", reject);
+    archive.on("error", reject);
+    archive.pipe(output);
+    for (const file of files) archive.append(file.buffer, { name: file.originalname.toLowerCase() });
+    void archive.finalize();
+  });
+  return target;
+}
+
+async function sha256File(filePath: string) {
+  return await new Promise<string>((resolve, reject) => {
+    const hash = createHash("sha256");
+    const input = createReadStream(filePath);
+    input.on("error", reject);
+    input.on("data", chunk => hash.update(chunk));
+    input.on("end", () => resolve(hash.digest("hex")));
+  });
+}
 
 function versionName() {
   const d = new Date();
@@ -139,6 +174,7 @@ gtfsRouter.post("/import/package", upload.array("files",20), async (req,res)=>{
   if(unsupported.length||missing.length) return res.status(400).json({status:"error",message:"Pacote GTFS inválido",missingRequiredFiles:missing,unsupportedFiles:unsupported});
 
   const client=await pool.connect(); const version=versionName(); const importedFiles:any[]=[];
+  let createdSnapshot: string | null = null;
   try {
     await client.query("BEGIN");
     for(const table of [...GTFS_TABLES].reverse()) await client.query(`TRUNCATE TABLE ${table}`);
@@ -153,11 +189,13 @@ gtfsRouter.post("/import/package", upload.array("files",20), async (req,res)=>{
     const validationErrors=await validateGtfs(client);
     if(Object.keys(validationErrors).length) throw new Error(`GTFS referential validation failed: ${JSON.stringify(validationErrors)}`);
     const total=await totalRecords(client);
+    createdSnapshot=await createSnapshot(version,files);
     await client.query(`INSERT INTO gtfs_versions (version,status,imported_at,total_records,notes) VALUES ($1,'ready',NOW(),$2,$3)`,[version,total,`Package import: ${importedFiles.map(x=>x.file).join(", ")}`]);
     await client.query("COMMIT");
     return res.json({status:"ok",version,versionStatus:"ready",totalRecords:total,files:importedFiles});
   } catch(error) {
     await client.query("ROLLBACK").catch(()=>undefined);
+    if(createdSnapshot) await unlink(createdSnapshot).catch(()=>undefined);
     console.error("[gtfs/import/package]",error);
     return res.status(500).json({status:"error",message:"Failed to import GTFS package",detail:error instanceof Error?error.message:"Unknown error"});
   } finally { client.release(); }
@@ -176,6 +214,7 @@ gtfsRouter.post("/publish", async (req,res)=>{
     );
     if(!candidate.rows[0]) { await client.query("ROLLBACK"); return res.status(404).json({status:"error",message:"Nenhuma versão GTFS pronta para publicação"}); }
     const row=candidate.rows[0];
+    try { await stat(snapshotPath(row.version)); } catch { await client.query("ROLLBACK"); return res.status(409).json({status:"error",message:"Snapshot da versão não encontrado. Reimporte o pacote GTFS com a API atual antes de publicar.",version:row.version}); }
     await client.query(`UPDATE gtfs_versions SET status='archived' WHERE status='published' AND id<>$1`,[row.id]);
     await client.query(`UPDATE gtfs_versions SET status='published',published_at=NOW() WHERE id=$1`,[row.id]);
     await client.query("COMMIT");
@@ -184,4 +223,44 @@ gtfsRouter.post("/publish", async (req,res)=>{
     await client.query("ROLLBACK").catch(()=>undefined); console.error("[gtfs/publish]",error);
     return res.status(500).json({status:"error",message:"Failed to publish GTFS version"});
   } finally { client.release(); }
+});
+
+
+gtfsRouter.get("/sync/manifest", async (req,res)=>{
+  try {
+    const result=await pool.query(`SELECT version,total_records,published_at FROM gtfs_versions WHERE status='published' ORDER BY published_at DESC NULLS LAST,id DESC LIMIT 1`);
+    const row=result.rows[0];
+    if(!row) return res.status(404).json({status:"error",message:"Nenhuma versão GTFS publicada"});
+    const filePath=snapshotPath(row.version);
+    let info;
+    try { info=await stat(filePath); } catch { return res.status(503).json({status:"error",message:"Snapshot da versão publicada indisponível",version:row.version}); }
+    const checksum=await sha256File(filePath);
+    const base=`${req.protocol}://${req.get("host")}`;
+    return res.json({
+      status:"ok",
+      version:row.version,
+      publishedAt:row.published_at,
+      totalRecords:Number(row.total_records??0),
+      package:{format:"zip",sizeBytes:info.size,sha256:checksum,url:`${base}/api/v1/gtfs/sync/download/${encodeURIComponent(row.version)}`}
+    });
+  } catch(error) {
+    console.error("[gtfs/sync/manifest]",error);
+    return res.status(500).json({status:"error",message:"Failed to build GTFS sync manifest"});
+  }
+});
+
+gtfsRouter.get("/sync/download/:version", async (req,res)=>{
+  try {
+    const result=await pool.query(`SELECT version FROM gtfs_versions WHERE version=$1 AND status='published' LIMIT 1`,[req.params.version]);
+    if(!result.rows[0]) return res.status(404).json({status:"error",message:"Versão GTFS publicada não encontrada"});
+    const filePath=snapshotPath(result.rows[0].version);
+    try { await stat(filePath); } catch { return res.status(404).json({status:"error",message:"Snapshot GTFS não encontrado"}); }
+    res.setHeader("Content-Type","application/zip");
+    res.setHeader("Content-Disposition",`attachment; filename="gtfs-${result.rows[0].version}.zip"`);
+    res.setHeader("Cache-Control","public, max-age=31536000, immutable");
+    return createReadStream(filePath).pipe(res);
+  } catch(error) {
+    console.error("[gtfs/sync/download]",error);
+    return res.status(500).json({status:"error",message:"Failed to download GTFS snapshot"});
+  }
 });
