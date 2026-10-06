@@ -10,13 +10,46 @@ vi.mock("@/database/database", () => ({ getDb: vi.fn() }));
 vi.mock("@/repositories/gtfsRepository", () => ({ gtfsRepository: { counts: vi.fn() } }));
 
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
-import { checkHomelab } from "@/services/diagnosticsService";
+import { checkHomelab, checkGtfsHealth, checkGtfsPackage } from "@/services/diagnosticsService";
 
 afterEach(() => {
   vi.unstubAllEnvs();
   vi.unstubAllGlobals();
   vi.useRealTimers();
   vi.resetAllMocks();
+});
+
+describe.each([
+  ["API GTFS Health", "VITE_APTRANSP_API_HEALTH", checkGtfsHealth],
+  ["API GTFS Package", "VITE_APTRANSP_API_PACK", checkGtfsPackage],
+] as const)("%s", (label, envName, check) => {
+  it("reports missing configuration", async () => {
+    vi.stubEnv(envName, "");
+    expect(await check()).toMatchObject({ label, status: "fail", detail: `${envName} não configurada` });
+  });
+
+  it("preserves the complete JSON response", async () => {
+    vi.stubEnv(envName, "http://gtfs.test/endpoint");
+    const data = { status: "ready", message: "long response ".repeat(100), files: ["stops.txt", "routes.txt"] };
+    const fetchMock = vi.fn().mockResolvedValue({ status: 200, text: async () => JSON.stringify(data) });
+    vi.stubGlobal("fetch", fetchMock);
+    expect(await check()).toMatchObject({ label, status: "ok", detail: `HTTP 200\n${JSON.stringify(data, null, 2)}` });
+    expect(fetchMock).toHaveBeenCalledWith("http://gtfs.test/endpoint", expect.anything());
+  });
+
+  it("shows unsuccessful HTTP responses without hiding the body", async () => {
+    vi.stubEnv(envName, "http://gtfs.test/endpoint");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ status: 503, text: async () => "Service unavailable\nRetry later" }));
+    expect(await check()).toMatchObject({ status: "fail", detail: "HTTP 503\nService unavailable\nRetry later" });
+  });
+
+  it("reads native HTTP response bodies", async () => {
+    vi.stubEnv(envName, "http://gtfs.test/endpoint");
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
+    vi.mocked(CapacitorHttp.get).mockResolvedValue({ status: 200, data: { ready: true }, headers: {}, url: "http://gtfs.test/endpoint" });
+    expect(await check()).toMatchObject({ status: "ok", detail: 'HTTP 200\n{\n  "ready": true\n}' });
+    expect(CapacitorHttp.get).toHaveBeenCalledWith(expect.objectContaining({ responseType: "text" }));
+  });
 });
 
 describe("Conexão homelab", () => {

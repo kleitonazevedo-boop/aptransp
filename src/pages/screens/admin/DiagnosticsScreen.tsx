@@ -32,16 +32,16 @@ const DiagnosticsScreen = ({ onBack }: Props) => {
         </button>
 
         {results.map((r) => (
-          <div key={r.key} className="bg-white rounded-2xl p-3 flex items-center gap-3 shadow-sm">
-            <StatusIcon status={r.status} />
-            <div className="flex-1 min-w-0">
-              <p className="text-sm font-semibold text-blue-900">{r.label}</p>
-              {r.detail && <p className="text-[11px] text-blue-900/60 truncate">{r.detail}</p>}
+          <div key={r.key} className="bg-white rounded-2xl p-4 space-y-3 shadow-sm min-w-0">
+            <div className="flex items-start gap-3">
+              <div className="shrink-0"><StatusIcon status={r.status} /></div>
+              <p className="flex-1 min-w-0 text-sm font-semibold text-blue-900 break-words">{r.label}</p>
+              <span className={`shrink-0 text-[10px] uppercase font-bold ${
+                r.status === "ok" ? "text-emerald-700" :
+                r.status === "fail" ? "text-red-700" : "text-amber-700"
+              }`}>{r.status}</span>
             </div>
-            <span className={`text-[10px] uppercase font-bold ${
-              r.status === "ok" ? "text-emerald-700" :
-              r.status === "fail" ? "text-red-700" : "text-amber-700"
-            }`}>{r.status}</span>
+            {r.detail && <pre className="text-xs font-sans text-blue-900/60 whitespace-pre-wrap [overflow-wrap:anywhere]">{r.detail}</pre>}
           </div>
         ))}
       </div>
