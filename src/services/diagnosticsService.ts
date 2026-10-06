@@ -1,3 +1,4 @@
+import { Capacitor, CapacitorHttp } from "@capacitor/core";
 import { hasGoogleKey, loadGoogleMaps } from "./googleMapsService";
 import { connectivityService } from "./connectivityService";
 import { getDb } from "@/database/database";
@@ -74,11 +75,46 @@ async function checkAndroidPerms(): Promise<DiagnosticResult> {
   } catch (e) { return { key: "perms", label: "Permissões", status: "unknown", detail: String(e) }; }
 }
 
+export async function checkHomelab(): Promise<DiagnosticResult> {
+  const base = { key: "homelab", label: "Conexão homelab" };
+  const configuredUrl = import.meta.env.VITE_APTRANSP_API_URL?.trim();
+  if (!configuredUrl) {
+    return { ...base, status: "fail", detail: "VITE_APTRANSP_API_URL não configurada" };
+  }
+
+  let url: URL;
+  try {
+    url = new URL(configuredUrl);
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error("Protocolo inválido");
+  } catch {
+    return { ...base, status: "fail", detail: "Endereço homelab inválido" };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const status = Capacitor.isNativePlatform()
+      ? (await CapacitorHttp.get({ url: url.href, connectTimeout: 8000, readTimeout: 8000 })).status
+      : (await fetch(url.href, { method: "GET", cache: "no-store", credentials: "omit", signal: controller.signal })).status;
+    // Any HTTP response confirms reachability, even if the root has no route or requires login.
+    return { ...base, status: "ok", detail: `Servidor acessível · HTTP ${status}` };
+  } catch {
+    return {
+      ...base, status: "fail",
+      detail: controller.signal.aborted
+        ? "Sem resposta em 8 segundos"
+        : "Não foi possível conectar: verifique rede, servidor e bloqueios de acesso (CORS/HTTP)",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export const diagnosticsService = {
   async runAll(): Promise<DiagnosticResult[]> {
     return Promise.all([
       checkConnectivity(), checkLocalDb(), checkGtfs(),
-      checkGoogleMaps(), checkGps(), checkAndroidPerms(),
+      checkGoogleMaps(), checkGps(), checkAndroidPerms(), checkHomelab(),
     ]);
   },
 };
