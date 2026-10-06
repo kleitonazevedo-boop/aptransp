@@ -44,6 +44,20 @@ export interface GtfsImportRow {
   updated_at?: string;
 }
 
+export interface GtfsSyncMetadata {
+  id: number;
+  version?: string | null;
+  published_at?: string | null;
+  total_records: number;
+  package_sha256?: string | null;
+  package_size_bytes?: number | null;
+  status: "idle" | "checking" | "downloading" | "importing" | "ready" | "error";
+  last_checked_at?: string | null;
+  last_synced_at?: string | null;
+  error_message?: string | null;
+  updated_at?: string | null;
+}
+
 export interface NearbyStop {
   stop_id: string;
   stop_name: string;
@@ -94,6 +108,50 @@ function haversineMeters(aLat: number, aLon: number, bLat: number, bLon: number)
 const CHUNK = 400;
 
 export const gtfsRepository = {
+  async getSyncMetadata(): Promise<GtfsSyncMetadata | null> {
+    const db = await getDb();
+    return db.one<GtfsSyncMetadata>("SELECT * FROM gtfs_sync_metadata WHERE id = 1;");
+  },
+
+  async setSyncStatus(
+    status: GtfsSyncMetadata["status"],
+    errorMessage: string | null = null,
+  ): Promise<void> {
+    const db = await getDb();
+    await db.run(
+      `UPDATE gtfs_sync_metadata
+          SET status = ?, error_message = ?, updated_at = datetime('now')
+        WHERE id = 1;`,
+      [status, errorMessage],
+    );
+  },
+
+  async markSyncChecked(): Promise<void> {
+    const db = await getDb();
+    await db.run(
+      "UPDATE gtfs_sync_metadata SET last_checked_at = datetime('now'), updated_at = datetime('now') WHERE id = 1;",
+    );
+  },
+
+  async activateSyncVersion(meta: {
+    version: string;
+    publishedAt: string | null;
+    totalRecords: number;
+    sha256: string;
+    sizeBytes: number;
+  }): Promise<void> {
+    const db = await getDb();
+    await db.run(
+      `UPDATE gtfs_sync_metadata
+          SET version = ?, published_at = ?, total_records = ?,
+              package_sha256 = ?, package_size_bytes = ?, status = 'ready',
+              last_checked_at = datetime('now'), last_synced_at = datetime('now'),
+              error_message = NULL, updated_at = datetime('now')
+        WHERE id = 1;`,
+      [meta.version, meta.publishedAt, meta.totalRecords, meta.sha256, meta.sizeBytes],
+    );
+  },
+
   async listImports(): Promise<GtfsImportRow[]> {
     const db = await getDb();
     return db.all<GtfsImportRow>("SELECT * FROM gtfs_imports ORDER BY created_at DESC, rowid DESC LIMIT 50;");
@@ -184,6 +242,62 @@ export const gtfsRepository = {
     } catch (e) {
       return fail(e instanceof Error ? e.message : String(e));
     }
+  },
+
+  /**
+   * Importa um pacote GTFS completo de forma atômica.
+   * Todas as tabelas são substituídas dentro de uma única transação SQLite;
+   * qualquer erro preserva integralmente a versão anterior.
+   */
+  async importPackageAtomic(
+    files: Partial<Record<GtfsFileName, string>>,
+    onProgress?: (file: GtfsFileName, imported: number, total: number) => void,
+  ): Promise<Record<string, number>> {
+    const required: GtfsFileName[] = ["agency.txt", "routes.txt", "stops.txt", "trips.txt", "stop_times.txt"];
+    for (const name of required) {
+      if (!files[name]) throw new Error(`Pacote GTFS incompleto: ${name} ausente`);
+    }
+
+    const statements: Array<{ sql: string; params?: (string | number | null)[] }> = [];
+    const counts: Record<string, number> = {};
+
+    for (const name of GTFS_FILES) {
+      const text = files[name];
+      if (text == null) continue;
+      const spec = GTFS_FILE_MAP[name];
+      const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+      if (lines.length < 2) throw new Error(`Arquivo GTFS vazio: ${name}`);
+
+      const header = parseCsvLine(lines[0]).map((h) => h.replace(/^\uFEFF/, ""));
+      const idx = spec.columns.map((column) => header.indexOf(column));
+      const missing = spec.columns.filter((_, i) => idx[i] < 0);
+      if (missing.length) throw new Error(`${name}: colunas ausentes: ${missing.join(", ")}`);
+
+      statements.push({ sql: `DELETE FROM ${spec.table};` });
+      const placeholders = spec.columns.map(() => "?").join(", ");
+      const sql = `INSERT OR REPLACE INTO ${spec.table} (${spec.columns.join(", ")}) VALUES (${placeholders});`;
+
+      const total = lines.length - 1;
+      for (let i = 1; i < lines.length; i++) {
+        const cells = parseCsvLine(lines[i]);
+        statements.push({ sql, params: idx.map((j) => cells[j] ?? null) });
+        if (i % 5000 === 0) onProgress?.(name, i, total);
+      }
+      counts[spec.table] = total;
+      onProgress?.(name, total, total);
+    }
+
+    const stops = counts.gtfs_stops ?? 0;
+    const routes = counts.gtfs_routes ?? 0;
+    const trips = counts.gtfs_trips ?? 0;
+    const stopTimes = counts.gtfs_stop_times ?? 0;
+    if (!stops || !routes || !trips || !stopTimes) {
+      throw new Error("Pacote GTFS inválido: tabelas essenciais sem registros");
+    }
+
+    const db = await getDb();
+    await db.transaction(statements);
+    return counts;
   },
 
   /** Paradas próximas — consulta offline com bounding box + haversine. */

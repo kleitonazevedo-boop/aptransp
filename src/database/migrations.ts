@@ -141,4 +141,24 @@ export const MIGRATIONS: Migration[] = [
       );`,
     ],
   },
+  {
+    version: 3,
+    name: "gtfs_sync_metadata",
+    statements: [
+      `CREATE TABLE IF NOT EXISTS gtfs_sync_metadata (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        version TEXT,
+        published_at TEXT,
+        total_records INTEGER NOT NULL DEFAULT 0,
+        package_sha256 TEXT,
+        package_size_bytes INTEGER,
+        status TEXT NOT NULL DEFAULT 'idle',
+        last_checked_at TEXT,
+        last_synced_at TEXT,
+        error_message TEXT,
+        updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );`,
+      `INSERT OR IGNORE INTO gtfs_sync_metadata (id, status) VALUES (1, 'idle');`,
+    ],
+  },
 ];
