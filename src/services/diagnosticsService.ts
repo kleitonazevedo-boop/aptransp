@@ -76,10 +76,33 @@ async function checkAndroidPerms(): Promise<DiagnosticResult> {
 }
 
 export async function checkHomelab(): Promise<DiagnosticResult> {
-  const base = { key: "homelab", label: "Conexão homelab" };
-  const configuredUrl = import.meta.env.VITE_APTRANSP_API_URL?.trim();
+  return checkApiConnection("homelab", "Conexão homelab", "VITE_APTRANSP_API_URL", import.meta.env.VITE_APTRANSP_API_URL, false);
+}
+
+export async function checkGtfsHealth(): Promise<DiagnosticResult> {
+  return checkApiConnection("gtfs-health", "API GTFS Health", "VITE_APTRANSP_API_HEALTH", import.meta.env.VITE_APTRANSP_API_HEALTH, true);
+}
+
+export async function checkGtfsPackage(): Promise<DiagnosticResult> {
+  return checkApiConnection("gtfs-package", "API GTFS Package", "VITE_APTRANSP_API_PACK", import.meta.env.VITE_APTRANSP_API_PACK, true);
+}
+
+function formatResponse(data: unknown): string {
+  if (typeof data === "string") {
+    if (!data.length) return "Resposta vazia";
+    try { return JSON.stringify(JSON.parse(data), null, 2); }
+    catch { return data; }
+  }
+  return data == null ? "Resposta vazia" : JSON.stringify(data, null, 2);
+}
+
+async function checkApiConnection(
+  key: string, label: string, envName: string, value: string | undefined, includeResponse: boolean,
+): Promise<DiagnosticResult> {
+  const base = { key, label };
+  const configuredUrl = value?.trim();
   if (!configuredUrl) {
-    return { ...base, status: "fail", detail: "VITE_APTRANSP_API_URL não configurada" };
+    return { ...base, status: "fail", detail: `${envName} não configurada` };
   }
 
   let url: URL;
@@ -87,17 +110,33 @@ export async function checkHomelab(): Promise<DiagnosticResult> {
     url = new URL(configuredUrl);
     if (!["http:", "https:"].includes(url.protocol)) throw new Error("Protocolo inválido");
   } catch {
-    return { ...base, status: "fail", detail: "Endereço homelab inválido" };
+    return { ...base, status: "fail", detail: key === "homelab" ? "Endereço homelab inválido" : `Endereço inválido em ${envName}` };
   }
 
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8000);
   try {
-    const status = Capacitor.isNativePlatform()
-      ? (await CapacitorHttp.get({ url: url.href, connectTimeout: 8000, readTimeout: 8000 })).status
-      : (await fetch(url.href, { method: "GET", cache: "no-store", credentials: "omit", signal: controller.signal })).status;
-    // Any HTTP response confirms reachability, even if the root has no route or requires login.
-    return { ...base, status: "ok", detail: `Servidor acessível · HTTP ${status}` };
+    let status: number;
+    let data: unknown;
+    if (Capacitor.isNativePlatform()) {
+      const response = await CapacitorHttp.get({
+        url: url.href, connectTimeout: 8000, readTimeout: 8000,
+        ...(includeResponse ? { responseType: "text" as const } : {}),
+      });
+      status = response.status;
+      data = response.data;
+    } else {
+      const response = await fetch(url.href, { method: "GET", cache: "no-store", credentials: "omit", signal: controller.signal });
+      status = response.status;
+      if (includeResponse) data = await response.text();
+    }
+    // Homelab checks reachability; GTFS endpoints also validate HTTP success.
+    return {
+      ...base, status: !includeResponse || (status >= 200 && status < 300) ? "ok" : "fail",
+      detail: includeResponse
+        ? `HTTP ${status}\n${formatResponse(data)}`
+        : `Servidor acessível · HTTP ${status}`,
+    };
   } catch {
     return {
       ...base, status: "fail",
@@ -115,6 +154,7 @@ export const diagnosticsService = {
     return Promise.all([
       checkConnectivity(), checkLocalDb(), checkGtfs(),
       checkGoogleMaps(), checkGps(), checkAndroidPerms(), checkHomelab(),
+      checkGtfsHealth(), checkGtfsPackage(),
     ]);
   },
 };
