@@ -24,6 +24,9 @@ export interface LocalDb {
   all<T = Record<string, unknown>>(sql: string, params?: SqlValue[]): Promise<T[]>;
   one<T = Record<string, unknown>>(sql: string, params?: SqlValue[]): Promise<T | null>;
   transaction(statements: Array<{ sql: string; params?: SqlValue[] }>): Promise<void>;
+  beginTransaction(): Promise<void>;
+  commitTransaction(): Promise<void>;
+  rollbackTransaction(): Promise<void>;
 }
 
 const isNative = Capacitor.isNativePlatform();
@@ -110,6 +113,17 @@ async function openDatabase(): Promise<LocalDb> {
     async one<T>(sql: string, params: SqlValue[] = []) {
       const rows = await api.all<T>(sql, params);
       return rows[0] ?? null;
+    },
+    async beginTransaction() {
+      await dbConn!.beginTransaction();
+    },
+    async commitTransaction() {
+      await dbConn!.commitTransaction();
+      await persist();
+    },
+    async rollbackTransaction() {
+      await dbConn!.rollbackTransaction();
+      await persist();
     },
     async transaction(statements) {
       if (!statements.length) return;
