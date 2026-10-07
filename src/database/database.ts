@@ -4,7 +4,8 @@
  * - Android/iOS (Capacitor): plugin nativo @capacitor-community/sqlite.
  * - Web (preview/desenvolvimento): jeep-sqlite (sql.js/WASM) com persistência em IndexedDB.
  *
- * Nenhuma chamada de rede é feita aqui. 100% offline.
+ * O banco principal e as consultas GTFS são locais. O updater baixa snapshots para
+ * bancos versionados separados e nunca substitui o banco de perfil/favoritos.
  */
 import { Capacitor } from "@capacitor/core";
 import { Directory, Filesystem } from "@capacitor/filesystem";
@@ -16,6 +17,7 @@ import {
 import { MIGRATIONS, LOCAL_USER_ID } from "./migrations";
 
 export const DB_NAME = "aptransp";
+export const GTFS_DB_PREFIX = "aptransp_gtfs_";
 export { LOCAL_USER_ID };
 
 export type SqlValue = string | number | null;
@@ -32,6 +34,7 @@ let sqlite: SQLiteConnection | null = null;
 let dbConn: SQLiteDBConnection | null = null;
 let initPromise: Promise<LocalDb> | null = null;
 let ready = false;
+const gtfsConnections = new Map<string, SQLiteDBConnection>();
 
 export function isDatabaseReady() {
   return ready;
@@ -279,6 +282,86 @@ export function getDb(): Promise<LocalDb> {
     });
   }
   return initPromise;
+}
+
+
+/** Nome lógico do snapshot versionado; o banco local de perfil/favoritos nunca é substituído. */
+export function gtfsDatabaseName(version: string) {
+  if (!/^[a-zA-Z0-9._-]+$/.test(version)) throw new Error("Versão GTFS inválida");
+  return `${GTFS_DB_PREFIX}${version}`;
+}
+
+function wrapReadConnection(conn: SQLiteDBConnection): LocalDb {
+  return {
+    async run() { throw new Error("Snapshot GTFS é somente leitura"); },
+    async transaction() { throw new Error("Snapshot GTFS é somente leitura"); },
+    async all<T>(sql: string, params: SqlValue[] = []) {
+      const result = await conn.query(sql, params);
+      return (result.values ?? []) as T[];
+    },
+    async one<T>(sql: string, params: SqlValue[] = []) {
+      const rows = await this.all<T>(sql, params);
+      return rows[0] ?? null;
+    },
+  };
+}
+
+/** Abre um snapshot já baixado sem executar migrations nem alterar seus dados. */
+export async function hasGtfsSnapshot(version: string): Promise<boolean> {
+  await getDb();
+  return (await sqlite!.isDatabase(gtfsDatabaseName(version))).result === true;
+}
+
+export async function getGtfsSnapshotDb(version: string): Promise<LocalDb> {
+  const name = gtfsDatabaseName(version);
+  await getDb();
+  const cached = gtfsConnections.get(name);
+  if (cached) return wrapReadConnection(cached);
+  const exists = (await sqlite!.isDatabase(name)).result === true;
+  if (!exists) throw new Error("Snapshot GTFS não instalado: " + version);
+  const connected = (await sqlite!.isConnection(name, true)).result === true;
+  const conn = connected
+    ? await sqlite!.retrieveConnection(name, true)
+    : await sqlite!.createConnection(name, false, "no-encryption", 1, true);
+  await conn.open();
+  gtfsConnections.set(name, conn);
+  return wrapReadConnection(conn);
+}
+
+/** O plugin transfere o SQLite em streaming para seu diretório privado multiplataforma. */
+export async function downloadGtfsSnapshot(url: string): Promise<void> {
+  await getDb();
+  await CapacitorSQLite.getFromHTTPRequest({ url, overwrite: true });
+}
+
+
+/** Remove um snapshot não promovido depois de download/validação malsucedidos. */
+export async function removeGtfsSnapshot(version: string): Promise<void> {
+  const name = gtfsDatabaseName(version);
+  const conn = gtfsConnections.get(name);
+  if (conn) {
+    await sqlite?.closeConnection(name, true).catch(() => undefined);
+    gtfsConnections.delete(name);
+  }
+  await CapacitorSQLite.deleteDatabase({ database: name });
+}
+
+/** Lê os bytes do arquivo SQLite já instalado para validar tamanho e SHA-256 locais. */
+export async function hashGtfsSnapshot(version: string): Promise<{ sizeBytes: number; sha256: string }> {
+  const db = await getGtfsSnapshotDb(version);
+  const conn = gtfsConnections.get(gtfsDatabaseName(version))!;
+  const list = await conn.query("PRAGMA database_list;");
+  const main = (list.values ?? []).find((row) => (row as { name?: string }).name === "main") as { file?: string } | undefined;
+  if (!main?.file) throw new Error("Caminho físico do snapshot GTFS indisponível");
+  const file = await Filesystem.readFile({ path: main.file });
+  const binary = typeof file.data === "string" ? atob(file.data) : "";
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index);
+  if (!globalThis.crypto?.subtle) throw new Error("SHA-256 indisponível neste dispositivo");
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  const sha256 = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  void db;
+  return { sizeBytes: bytes.byteLength, sha256 };
 }
 
 /** Utilitário: id único sem dependências externas. */

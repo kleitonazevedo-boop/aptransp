@@ -1,4 +1,4 @@
-import { getDb, newId } from "@/database/database";
+import { getDb, getGtfsSnapshotDb, newId, type LocalDb } from "@/database/database";
 
 /** Arquivos GTFS suportados e mapeamento tabela/colunas. */
 export const GTFS_FILE_MAP = {
@@ -105,6 +105,18 @@ function haversineMeters(aLat: number, aLon: number, bLat: number, bLon: number)
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+async function getGtfsReadDb(): Promise<LocalDb> {
+  const main = await getDb();
+  const metadata = await main.one<GtfsSyncMetadata>("SELECT * FROM gtfs_sync_metadata WHERE id = 1;");
+  if (metadata?.version) {
+    try { return await getGtfsSnapshotDb(metadata.version); }
+    catch {
+      console.warn("[GTFS-DB] Snapshot ativo indisponível; consultando GTFS legado local.");
+    }
+  }
+  return main;
+}
+
 const CHUNK = 400;
 
 export const gtfsRepository = {
@@ -150,6 +162,7 @@ export const gtfsRepository = {
         WHERE id = 1;`,
       [meta.version, meta.publishedAt, meta.totalRecords, meta.sha256, meta.sizeBytes],
     );
+    verifiedSnapshotVersions.add(meta.version);
   },
 
   async listImports(): Promise<GtfsImportRow[]> {
@@ -163,17 +176,27 @@ export const gtfsRepository = {
   },
 
   async counts(): Promise<Record<string, number>> {
-    const db = await getDb();
+    const db = await getGtfsReadDb();
+    const schema = await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table';");
+    const available = new Set(schema.map((row) => row.name));
+    const dataset = await this.validateDataset();
     const result: Record<string, number> = {};
     for (const { table } of Object.values(GTFS_FILE_MAP)) {
-      const row = await db.one<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table};`);
+      const key = table.replace(/^gtfs_/, "");
+      const candidates = [dataset.tables[key], table, key].filter((name): name is string => Boolean(name));
+      const selected = candidates.find((name) => available.has(name));
+      if (!selected) {
+        result[table] = 0;
+        continue;
+      }
+      const row = await db.one<{ n: number }>('SELECT COUNT(*) AS n FROM "' + selected + '";');
       result[table] = Number(row?.n ?? 0);
     }
     return result;
   },
 
-  async validateDataset(): Promise<{ valid: boolean; counts: Record<string, number>; tables: Record<string, string | null> }> {
-    const db = await getDb();
+  async validateDataset(useLegacyDatabase = false): Promise<{ valid: boolean; counts: Record<string, number>; tables: Record<string, string | null> }> {
+    const db = useLegacyDatabase ? await getDb() : await getGtfsReadDb();
     const schema = await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table';");
     const available = new Set(schema.map((row) => row.name));
     const specs = [
@@ -354,7 +377,7 @@ export const gtfsRepository = {
       throw new Error("Raio de busca inválido.");
     }
 
-    const db = await getDb();
+    const db = await getGtfsReadDb();
     const status = await this.validateDataset();
     const table = status.tables.stops;
     if (!table || status.counts.stops === 0) throw new Error("Base GTFS local não instalada ou sem dados.");
@@ -427,7 +450,7 @@ export const gtfsRepository = {
       return [];
     }
 
-    const db = await getDb();
+    const db = await getGtfsReadDb();
     const stopTable = status.tables.stop_times!;
     const tripTable = status.tables.trips!;
     const routeTable = status.tables.routes!;
@@ -495,14 +518,19 @@ export const gtfsRepository = {
 
   /** Próximos horários programados de uma parada (offline, via stop_times). */
   async nextDepartures(stopId: string, limit = 8) {
-    const db = await getDb();
+    const db = await getGtfsReadDb();
+    const tables = (await this.validateDataset()).tables;
+    const stopTimes = tables.stop_times;
+    const trips = tables.trips;
+    const routes = tables.routes;
+    if (!stopTimes || !trips || !routes) throw new Error("Base GTFS local não instalada ou sem dados.");
     const now = new Date();
     const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:00`;
     return db.all<{ departure_time: string; route_short_name: string; trip_headsign: string }>(
       `SELECT st.departure_time, r.route_short_name, t.trip_headsign
-         FROM gtfs_stop_times st
-         JOIN gtfs_trips t ON t.trip_id = st.trip_id
-         JOIN gtfs_routes r ON r.route_id = t.route_id
+         FROM "${stopTimes}" st
+         JOIN "${trips}" t ON t.trip_id = st.trip_id
+         JOIN "${routes}" r ON r.route_id = t.route_id
         WHERE st.stop_id = ? AND st.departure_time >= ?
         ORDER BY st.departure_time ASC LIMIT ?;`,
       [stopId, hhmm, limit],

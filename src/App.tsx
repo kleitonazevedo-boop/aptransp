@@ -7,6 +7,7 @@ import { TooltipProvider } from "@/components/ui/tooltip";
 import { AuthProvider } from "@/hooks/useAuth";
 import "@/services/connectivityService";
 import type { NfcData } from "@/services/nfcService";
+import { gtfsService } from "@/services/gtfsService";
 import Index from "./pages/Index.tsx";
 import NfcDebug from "./pages/NfcDebug.tsx";
 import NotFound from "./pages/NotFound.tsx";
@@ -14,6 +15,12 @@ import NotFound from "./pages/NotFound.tsx";
 const queryClient = new QueryClient();
 
 const App = () => {
+  useEffect(() => {
+    void gtfsService.checkRemoteVersion().catch(() => {
+      // A indisponibilidade da rede nunca bloqueia a base SQLite local.
+    });
+  }, []);
+
   // NFC bridge (mantido)
   useEffect(() => {
     const handler = (event: Event) => {

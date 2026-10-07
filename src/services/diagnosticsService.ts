@@ -3,6 +3,7 @@ import { hasGoogleKey, loadGoogleMaps } from "./googleMapsService";
 import { connectivityService } from "./connectivityService";
 import { getDb } from "@/database/database";
 import { gtfsRepository } from "@/repositories/gtfsRepository";
+import { getApiBaseUrl } from "@/config/api";
 
 export type DiagnosticStatus = "ok" | "fail" | "unknown";
 
@@ -76,15 +77,18 @@ async function checkAndroidPerms(): Promise<DiagnosticResult> {
 }
 
 export async function checkHomelab(): Promise<DiagnosticResult> {
-  return checkApiConnection("homelab", "Conexão homelab", "VITE_APTRANSP_API_URL", import.meta.env.VITE_APTRANSP_API_URL, false);
+  try { return checkApiConnection("homelab", "API APTRANSP", getApiBaseUrl() + "/health", false); }
+  catch (error) { return { key: "homelab", label: "API APTRANSP", status: "fail", detail: error instanceof Error ? error.message : "URL da API inválida" }; }
 }
 
 export async function checkGtfsHealth(): Promise<DiagnosticResult> {
-  return checkApiConnection("gtfs-health", "API GTFS Health", "VITE_APTRANSP_API_HEALTH", import.meta.env.VITE_APTRANSP_API_HEALTH, true);
+  try { return checkApiConnection("gtfs-health", "API GTFS Health", getApiBaseUrl() + "/health/database", true); }
+  catch (error) { return { key: "gtfs-health", label: "API GTFS Health", status: "fail", detail: error instanceof Error ? error.message : "URL da API inválida" }; }
 }
 
 export async function checkGtfsPackage(): Promise<DiagnosticResult> {
-  return checkApiConnection("gtfs-package", "API GTFS Package", "VITE_APTRANSP_API_PACK", import.meta.env.VITE_APTRANSP_API_PACK, true);
+  try { return checkApiConnection("gtfs-package", "Metadata GTFS", getApiBaseUrl() + "/api/v1/gtfs/sync/latest", true); }
+  catch (error) { return { key: "gtfs-package", label: "Metadata GTFS", status: "fail", detail: error instanceof Error ? error.message : "URL da API inválida" }; }
 }
 
 function formatResponse(data: unknown): string {
@@ -97,20 +101,15 @@ function formatResponse(data: unknown): string {
 }
 
 async function checkApiConnection(
-  key: string, label: string, envName: string, value: string | undefined, includeResponse: boolean,
+  key: string, label: string, configuredUrl: string, includeResponse: boolean,
 ): Promise<DiagnosticResult> {
   const base = { key, label };
-  const configuredUrl = value?.trim();
-  if (!configuredUrl) {
-    return { ...base, status: "fail", detail: `${envName} não configurada` };
-  }
-
   let url: URL;
   try {
     url = new URL(configuredUrl);
     if (!["http:", "https:"].includes(url.protocol)) throw new Error("Protocolo inválido");
   } catch {
-    return { ...base, status: "fail", detail: key === "homelab" ? "Endereço homelab inválido" : `Endereço inválido em ${envName}` };
+    return { ...base, status: "fail", detail: "Endereço da API inválido" };
   }
 
   const controller = new AbortController();
