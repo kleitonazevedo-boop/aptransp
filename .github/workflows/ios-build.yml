@@ -370,12 +370,15 @@ jobs:
             echo "Exported IPA is not signed with the imported Apple Distribution identity."
             exit 1
           fi
+          if [ "$SIGNATURE_TEAM" != "$IOS_TEAM_ID" ]; then
+            echo "Exported IPA is signed for a different Apple Developer team."
+            exit 1
+          fi
 
-          export APP_PATH
+          export APP_PATH SIGNATURE_IDENTITY
           python3 - <<'PY'
           import os
           import plistlib
-          import zipfile
           from pathlib import Path
 
           info_path = Path(os.environ["APP_PATH"]) / "Info.plist"
@@ -400,9 +403,6 @@ jobs:
           print(f"Signing identity: {os.environ['SIGNATURE_IDENTITY']}")
           print(f"Provisioning profile: {os.environ['IOS_PROFILE_NAME']}")
           PY
-        env:
-          SIGNATURE_IDENTITY: ${{ env.IOS_SIGNING_IDENTITY }}
-
       - name: Upload IPA to App Store Connect / TestFlight
         id: testflight-upload
         timeout-minutes: 30
@@ -416,7 +416,6 @@ jobs:
           mkdir -p "$PRIVATE_KEYS_DIR"
           chmod 700 "$PRIVATE_KEYS_DIR"
           KEY_PATH="$PRIVATE_KEYS_DIR/AuthKey_${ASC_KEY_ID}.p8"
-          echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
           export KEY_PATH ASC_API_KEY_BASE64
           python3 - <<'PY'
           import base64
