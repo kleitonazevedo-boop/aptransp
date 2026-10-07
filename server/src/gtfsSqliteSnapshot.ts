@@ -69,7 +69,7 @@ async function write(stream: NodeJS.WritableStream, data: string) {
 
 export async function createSqliteSnapshot(client: PoolClient, directory: string, version: string, totalRecords: number) {
   await mkdir(directory, { recursive: true });
-  const target = path.join(directory, `gtfs-${version}.sqlite`);
+  const target = path.join(directory, `aptransp_gtfs_${version}.db`);
   const temp = `${target}.tmp`;
   await unlink(temp).catch(() => undefined);
   await unlink(target).catch(() => undefined);
