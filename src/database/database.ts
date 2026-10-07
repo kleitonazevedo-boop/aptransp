@@ -15,6 +15,7 @@ import {
 import { MIGRATIONS, LOCAL_USER_ID } from "./migrations";
 
 export const DB_NAME = "aptransp";
+export const GTFS_DB_PREFIX = "aptransp_gtfs_";
 export { LOCAL_USER_ID };
 
 export type SqlValue = string | number | null;
@@ -34,6 +35,7 @@ let sqlite: SQLiteConnection | null = null;
 let dbConn: SQLiteDBConnection | null = null;
 let initPromise: Promise<LocalDb> | null = null;
 let ready = false;
+const gtfsConnections = new Map<string, SQLiteDBConnection>();
 
 export function isDatabaseReady() {
   return ready;
@@ -147,6 +149,71 @@ export function getDb(): Promise<LocalDb> {
     });
   }
   return initPromise;
+}
+
+
+function wrapConnection(conn: SQLiteDBConnection, shouldPersist = false): LocalDb {
+  const api: LocalDb = {
+    async run(sql, params = []) {
+      await conn.run(sql, params, false);
+      if (shouldPersist) await persist();
+    },
+    async all<T>(sql: string, params: SqlValue[] = []) {
+      const r = await conn.query(sql, params);
+      return (r.values ?? []) as T[];
+    },
+    async one<T>(sql: string, params: SqlValue[] = []) {
+      const rows = await api.all<T>(sql, params);
+      return rows[0] ?? null;
+    },
+    async beginTransaction() { await conn.beginTransaction(); },
+    async commitTransaction() {
+      await conn.commitTransaction();
+      if (shouldPersist) await persist();
+    },
+    async rollbackTransaction() {
+      await conn.rollbackTransaction();
+      if (shouldPersist) await persist();
+    },
+    async transaction(statements) {
+      if (!statements.length) return;
+      await conn.executeSet(
+        statements.map((s) => ({ statement: s.sql, values: (s.params ?? []) as SqlValue[] })),
+        false,
+      );
+      if (shouldPersist) await persist();
+    },
+  };
+  return api;
+}
+
+/** Nome lógico do snapshot GTFS baixado pelo plugin nativo. */
+export function gtfsDatabaseName(version: string) {
+  return `${GTFS_DB_PREFIX}${version}`;
+}
+
+/** Abre um snapshot GTFS já instalado, sem executar migrations do banco principal. */
+export async function getGtfsSnapshotDb(version: string): Promise<LocalDb> {
+  if (!isNative) throw new Error("Snapshot GTFS remoto está disponível somente no app nativo");
+  await getDb();
+  const name = gtfsDatabaseName(version);
+  const cached = gtfsConnections.get(name);
+  if (cached) return wrapConnection(cached);
+
+  const existing = (await sqlite!.isConnection(name, false)).result;
+  const conn = existing
+    ? await sqlite!.retrieveConnection(name, false)
+    : await sqlite!.createConnection(name, false, "no-encryption", 1, false);
+  await conn.open();
+  gtfsConnections.set(name, conn);
+  return wrapConnection(conn);
+}
+
+/** Faz o plugin nativo baixar o .db diretamente para a pasta SQLite do app. */
+export async function downloadGtfsSnapshot(url: string): Promise<void> {
+  if (!isNative) throw new Error("Download nativo do GTFS disponível somente no app");
+  await getDb();
+  await CapacitorSQLite.getFromHTTPRequest({ url, overwrite: true });
 }
 
 /** Utilitário: id único sem dependências externas. */
