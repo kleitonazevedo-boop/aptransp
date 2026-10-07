@@ -7,15 +7,23 @@ guard CommandLine.arguments.count == 3 else {
 
 let source = CommandLine.arguments[1]
 let output = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
-guard let logo = NSImage(contentsOfFile: source),
-      let bitmap = NSBitmapImageRep(
-        bitmapDataPlanes: nil, pixelsWide: 1024, pixelsHigh: 1024,
-        bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false,
-        isPlanar: false, colorSpaceName: .deviceRGB,
-        bytesPerRow: 0, bitsPerPixel: 0
-      ),
-      let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
-    fatalError("Unable to load the APTRANSP logo or create the iOS icon")
+guard let logoData = try? Data(contentsOf: URL(fileURLWithPath: source)),
+      let logoBitmap = NSBitmapImageRep(data: logoData) else {
+    fatalError("Unable to decode the APTRANSP logo PNG at \(source)")
+}
+let logo = NSImage(size: NSSize(width: 1024, height: 1024))
+logo.addRepresentation(logoBitmap)
+
+guard let bitmap = NSBitmapImageRep(
+    bitmapDataPlanes: nil, pixelsWide: 1024, pixelsHigh: 1024,
+    bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false,
+    isPlanar: false, colorSpaceName: .deviceRGB,
+    bytesPerRow: 0, bitsPerPixel: 0
+) else {
+    fatalError("Unable to allocate the opaque 1024x1024 iOS icon bitmap")
+}
+guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+    fatalError("Unable to create the graphics context for the iOS icon bitmap")
 }
 
 // Use the application's existing theme as the opaque iOS icon background.
