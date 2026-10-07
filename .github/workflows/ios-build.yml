@@ -252,6 +252,116 @@ jobs:
               env_file.write(f"IOS_TEAM_ID={team_id}\n")
               env_file.write(f"IOS_SIGNING_IDENTITY={os.environ['IDENTITY']}\n")
           PY
+      - name: Configure manual signing for APTRANSP app target
+        run: |
+          set -euo pipefail
+          PROJECT_FILE="$(find ios -maxdepth 8 -type f -name project.pbxproj -not -path '*/Pods/*' -print -quit)"
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "No non-Pods Xcode project file was found under ios/."
+            exit 1
+          fi
+
+          export PROJECT_FILE IOS_PROFILE_NAME IOS_TEAM_ID
+          export APTRANSP_BUNDLE_ID="br.com.aptransp.app"
+          export APTRANSP_BUILD_NUMBER="$GITHUB_RUN_NUMBER"
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path(os.environ["PROJECT_FILE"])
+          text = path.read_text(encoding="utf-8")
+          expected_bundle_id = os.environ["APTRANSP_BUNDLE_ID"]
+          config_pattern = re.compile(
+              r"(^[ \t]*[A-Fa-f0-9]{24} /\* (?:Debug|Release) \*/ = \{\n"
+              r"[ \t]*isa = XCBuildConfiguration;\n"
+              r"[ \t]*buildSettings = \{\n)(.*?)(\n[ \t]*\};\n"
+              r"[ \t]*name = (?:Debug|Release);\n[ \t]*\};)",
+              re.M | re.S,
+          )
+
+          def set_setting(body, key, value):
+              pattern = re.compile(rf"^([ \t]*){re.escape(key)} = .*?;$", re.M)
+              replacement = rf"\1{key} = {value};"
+              if pattern.search(body):
+                  return pattern.sub(replacement, body)
+              return f"\t\t\t\t{key} = {value};\n" + body
+
+          def quote(value):
+              return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+          settings = {
+              "CODE_SIGN_STYLE": "Manual",
+              "CODE_SIGN_IDENTITY": '"Apple Distribution"',
+              "DEVELOPMENT_TEAM": os.environ["IOS_TEAM_ID"],
+              "PROVISIONING_PROFILE_SPECIFIER": quote(os.environ["IOS_PROFILE_NAME"]),
+              "PRODUCT_BUNDLE_IDENTIFIER": expected_bundle_id,
+              "MARKETING_VERSION": "1.0.0",
+              "CURRENT_PROJECT_VERSION": os.environ["APTRANSP_BUILD_NUMBER"],
+          }
+
+          updated = 0
+          def patch(match):
+              global updated
+              body = match.group(2)
+              has_bundle_id = re.search(
+                  r"^\s*PRODUCT_BUNDLE_IDENTIFIER = \"?"
+                  + re.escape(expected_bundle_id)
+                  + r"\"?;$",
+                  body,
+                  re.M,
+              )
+              if not has_bundle_id and "INFOPLIST_FILE = App/Info.plist;" not in body:
+                  return match.group(0)
+              for key, value in settings.items():
+                  body = set_setting(body, key, value)
+              updated += 1
+              return match.group(1) + body + match.group(3)
+
+          result = config_pattern.sub(patch, text)
+          if updated == 0:
+              raise SystemExit("Could not find the APTRANSP app target build configurations to sign.")
+          path.write_text(result, encoding="utf-8")
+          print(f"Manual App Store signing configured for the APTRANSP app target ({updated} configurations).")
+          PY
+
+          xcodebuild -showBuildSettings -json \
+            "$IOS_CONTAINER_FLAG" "$IOS_CONTAINER_PATH" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            > "$RUNNER_TEMP/xcode-signed-build-settings.json" 2> "$RUNNER_TEMP/xcode-signed-settings.log"
+
+          export XCODE_SIGNED_SETTINGS_JSON="$RUNNER_TEMP/xcode-signed-build-settings.json"
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["XCODE_SIGNED_SETTINGS_JSON"], encoding="utf-8") as stream:
+              targets = json.load(stream)
+          expected = {
+              "PRODUCT_BUNDLE_IDENTIFIER": "br.com.aptransp.app",
+              "CODE_SIGN_STYLE": "Manual",
+              "PROVISIONING_PROFILE_SPECIFIER": os.environ["IOS_PROFILE_NAME"],
+              "DEVELOPMENT_TEAM": os.environ["IOS_TEAM_ID"],
+              "MARKETING_VERSION": "1.0.0",
+              "CURRENT_PROJECT_VERSION": os.environ["GITHUB_RUN_NUMBER"],
+          }
+          apps = [
+              item for item in targets
+              if item.get("buildSettings", {}).get("PRODUCT_TYPE") == "com.apple.product-type.application"
+              and item.get("buildSettings", {}).get("PRODUCT_BUNDLE_IDENTIFIER") == expected["PRODUCT_BUNDLE_IDENTIFIER"]
+          ]
+          if len(apps) != 1:
+              raise SystemExit(f"Expected one APTRANSP app target after signing configuration; found {len(apps)}.")
+          settings = apps[0].get("buildSettings", {})
+          for key, value in expected.items():
+              actual = settings.get(key)
+              if actual != value:
+                  raise SystemExit(f"APTRANSP app target has unexpected {key}: {actual!r}.")
+          print("APTRANSP app target signing settings validated.")
+          PY
+
       - name: Archive signed iOS app
         run: |
           set -euo pipefail
@@ -262,13 +372,6 @@ jobs:
             -configuration Release \
             -destination 'generic/platform=iOS' \
             -archivePath "$IOS_ARCHIVE_PATH" \
-            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
-            CODE_SIGN_STYLE=Manual \
-            CODE_SIGN_IDENTITY="$IOS_SIGNING_IDENTITY" \
-            PROVISIONING_PROFILE="$IOS_PROFILE_UUID" \
-            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
-            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
-            MARKETING_VERSION="1.0.0" \
             > "$RUNNER_TEMP/ios-build.log" 2>&1; then
             tail -n 200 "$RUNNER_TEMP/ios-build.log"
             exit 1
@@ -469,6 +572,7 @@ jobs:
             ${{ runner.temp }}/ios-*.log
             ${{ runner.temp }}/xcode-list.log
             ${{ runner.temp }}/xcode-settings.log
+            ${{ runner.temp }}/xcode-signed-settings.log
             ${{ runner.temp }}/testflight-upload.log
           if-no-files-found: warn
           retention-days: 14
