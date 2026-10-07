@@ -1,4 +1,4 @@
-name: Build iOS
+name: Build and upload iOS to TestFlight
 
 on:
   workflow_dispatch:
@@ -15,9 +15,15 @@ concurrency:
 
 jobs:
   build-ios:
-    name: Build APTRANSP for iOS
+    name: Build APTRANSP for iOS and upload to TestFlight
     runs-on: macos-15
-    timeout-minutes: 45
+    timeout-minutes: 60
+    env:
+      IOS_SIGNING_DIR: ${{ runner.temp }}/aptransp-ios-signing
+      IOS_KEYCHAIN_PATH: ${{ runner.temp }}/aptransp-ios-signing/build.keychain-db
+      IOS_PROFILE_PATH: ${{ runner.temp }}/aptransp-ios-signing/profile.mobileprovision
+      IOS_ARCHIVE_PATH: ${{ runner.temp }}/APTRANSP.xcarchive
+      IOS_EXPORT_PATH: ${{ runner.temp }}/APTRANSP-export
 
     steps:
       - name: Checkout repository
@@ -44,22 +50,432 @@ jobs:
       - name: Sync Capacitor iOS project
         run: npx cap sync ios
 
-      - name: Archive iOS app (unsigned)
+      - name: Import Apple Distribution certificate and install profile
+        name: Import signing assets
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
         run: |
-          xcodebuild \
-            -project ios/App/App.xcodeproj \
-            -scheme App \
+          set -euo pipefail
+          mkdir -p "$IOS_SIGNING_DIR" "$HOME/Library/MobileDevice/Provisioning Profiles"
+          chmod 700 "$IOS_SIGNING_DIR"
+
+          export IOS_SIGNING_DIR IOS_CERTIFICATE_BASE64 IOS_PROVISIONING_PROFILE_BASE64
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          directory = Path(os.environ["IOS_SIGNING_DIR"])
+          for secret_name, filename in (
+              ("IOS_CERTIFICATE_BASE64", "distribution.p12"),
+              ("IOS_PROVISIONING_PROFILE_BASE64", "profile.mobileprovision"),
+          ):
+              value = "".join(os.environ[secret_name].split())
+              if not value:
+                  raise SystemExit(f"{secret_name} is empty")
+              data = base64.b64decode(value, validate=True)
+              path = directory / filename
+              path.write_bytes(data)
+              path.chmod(0o600)
+          PY
+
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$IOS_KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+          security import "$IOS_SIGNING_DIR/distribution.p12" \
+            -k "$IOS_KEYCHAIN_PATH" \
+            -P "$IOS_P12_PASSWORD" \
+            -T /usr/bin/codesign \
+            -T /usr/bin/security
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+          security list-keychains -d user -s "$IOS_KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
+          security default-keychain -d user -s "$IOS_KEYCHAIN_PATH"
+
+          IDENTITY="$(security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH" |
+            awk -F '"' '/Apple Distribution:/ { print $2 }' | head -n 1)"
+          if [ -z "$IDENTITY" ]; then
+            echo "No valid Apple Distribution identity was found in the imported P12."
+            exit 1
+          fi
+
+          security cms -D -i "$IOS_PROFILE_PATH" > "$IOS_SIGNING_DIR/profile.plist"
+          export APTRANSP_BUNDLE_ID="br.com.aptransp.app"
+          python3 - <<'PY'
+          import os
+          import plistlib
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          profile_path = Path(os.environ["IOS_SIGNING_DIR"]) / "profile.plist"
+          with profile_path.open("rb") as stream:
+              profile = plistlib.load(stream)
+
+          bundle_id = os.environ["APTRANSP_BUNDLE_ID"]
+          entitlements = profile.get("Entitlements", {})
+          application_identifier = entitlements.get("application-identifier", "")
+          profile_uuid = profile.get("UUID", "")
+          profile_name = profile.get("Name", "")
+          team_id = entitlements.get("com.apple.developer.team-identifier")
+          if not team_id:
+              team_ids = profile.get("TeamIdentifier", [])
+              team_id = team_ids[0] if team_ids else ""
+
+          if not application_identifier.endswith("." + bundle_id):
+              raise SystemExit(
+                  "Provisioning profile does not authorize the required Bundle ID "
+                  f"(expected {bundle_id})."
+              )
+          if "*" in application_identifier or entitlements.get("get-task-allow", True):
+              raise SystemExit("Provisioning profile is not an App Store distribution profile.")
+          if profile.get("ProvisionedDevices") or profile.get("ProvisionsAllDevices"):
+              raise SystemExit("Provisioning profile is not an App Store distribution profile.")
+          expiration = profile.get("ExpirationDate")
+          if expiration and expiration <= datetime.now(timezone.utc).replace(tzinfo=None):
+              raise SystemExit("Provisioning profile has expired.")
+          if not profile_uuid or not profile_name or not team_id:
+              raise SystemExit("Provisioning profile metadata is incomplete.")
+          if any("\n" in value or "\r" in value for value in (profile_uuid, profile_name, team_id)):
+              raise SystemExit("Provisioning profile metadata contains invalid line breaks.")
+
+          installed_path = Path.home() / "Library/MobileDevice/Provisioning Profiles" / f"{profile_uuid}.mobileprovision"
+          installed_path.write_bytes(Path(os.environ["IOS_PROFILE_PATH"]).read_bytes())
+          installed_path.chmod(0o600)
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"IOS_PROFILE_UUID={profile_uuid}\n")
+              env_file.write(f"IOS_PROFILE_NAME={profile_name}\n")
+              env_file.write(f"IOS_TEAM_ID={team_id}\n")
+              env_file.write(f"IOS_SIGNING_IDENTITY={os.environ['IDENTITY']}\n")
+          PY
+        env:
+          IDENTITY: ${{ env.IOS_SIGNING_IDENTITY }}
+
+      - name: Discover Xcode workspace, project, and scheme
+        id: xcode
+        run: |
+          set -euo pipefail
+          WORKSPACE="$(find ios -maxdepth 6 -type d -name '*.xcworkspace' -not -path '*/Pods/*' -print -quit)"
+          if [ -n "$WORKSPACE" ]; then
+            CONTAINER_FLAG="-workspace"
+            CONTAINER_PATH="$WORKSPACE"
+          else
+            PROJECT="$(find ios -maxdepth 6 -type d -name '*.xcodeproj' -not -path '*/Pods/*' -print -quit)"
+            if [ -z "$PROJECT" ]; then
+              echo "No Xcode workspace or project was generated under ios/."
+              exit 1
+            fi
+            CONTAINER_FLAG="-project"
+            CONTAINER_PATH="$PROJECT"
+          fi
+
+          xcodebuild -list -json "$CONTAINER_FLAG" "$CONTAINER_PATH" \
+            > "$RUNNER_TEMP/xcode-list.json" 2> "$RUNNER_TEMP/xcode-list.log"
+
+          export XCODE_LIST_JSON="$RUNNER_TEMP/xcode-list.json"
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["XCODE_LIST_JSON"], encoding="utf-8") as stream:
+              data = json.load(stream)
+          metadata = data.get("workspace") or data.get("project") or {}
+          schemes = metadata.get("schemes", [])
+          if "App" in schemes:
+              scheme = "App"
+          elif len(schemes) == 1:
+              scheme = schemes[0]
+          else:
+              raise SystemExit(f"Could not select a unique app scheme. Xcode schemes: {schemes}")
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"IOS_CONTAINER_FLAG={os.environ['CONTAINER_FLAG']}\n")
+              env_file.write(f"IOS_CONTAINER_PATH={os.environ['CONTAINER_PATH']}\n")
+              env_file.write(f"IOS_SCHEME={scheme}\n")
+          print(f"Using Xcode {os.environ['CONTAINER_FLAG']} and scheme: {scheme}")
+          PY
+        env:
+          CONTAINER_FLAG: ${{ env.IOS_CONTAINER_FLAG }}
+          CONTAINER_PATH: ${{ env.IOS_CONTAINER_PATH }}
+
+      - name: Validate Bundle ID and Xcode target
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const config = JSON.parse(fs.readFileSync("capacitor.config.json", "utf8"));
+          if (config.appId !== "br.com.aptransp.app") {
+            throw new Error(`Unexpected Capacitor appId: ${config.appId}`);
+          }
+          console.log(`Capacitor Bundle ID: ${config.appId}`);
+          NODE
+
+          xcodebuild -showBuildSettings -json \
+            "$IOS_CONTAINER_FLAG" "$IOS_CONTAINER_PATH" \
+            -scheme "$IOS_SCHEME" \
             -configuration Release \
             -destination 'generic/platform=iOS' \
-            -archivePath "${{ runner.temp }}/APTRANSP.xcarchive" \
-            CODE_SIGNING_ALLOWED=NO \
-            CODE_SIGNING_REQUIRED=NO \
-            archive
+            > "$RUNNER_TEMP/xcode-build-settings.json" 2> "$RUNNER_TEMP/xcode-settings.log"
 
-      - name: Upload iOS archive
+          export XCODE_SETTINGS_JSON="$RUNNER_TEMP/xcode-build-settings.json"
+          python3 - <<'PY'
+          import json
+          import os
+
+          expected = "br.com.aptransp.app"
+          with open(os.environ["XCODE_SETTINGS_JSON"], encoding="utf-8") as stream:
+              targets = json.load(stream)
+          apps = [
+              item for item in targets
+              if item.get("buildSettings", {}).get("PRODUCT_TYPE") == "com.apple.product-type.application"
+          ]
+          matches = [
+              item for item in apps
+              if item.get("buildSettings", {}).get("PRODUCT_BUNDLE_IDENTIFIER") == expected
+          ]
+          if len(matches) != 1:
+              details = [
+                  f"{item.get('target')}: {item.get('buildSettings', {}).get('PRODUCT_BUNDLE_IDENTIFIER')}"
+                  for item in apps
+              ]
+              raise SystemExit(
+                  f"Expected exactly one iOS app target with Bundle ID {expected}; found: {details}"
+              )
+          print(f"Xcode app target: {matches[0].get('target')}")
+          print(f"Xcode Bundle ID: {expected}")
+          PY
+
+      - name: Archive signed iOS app
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP"
+          if ! xcodebuild archive \
+            "$IOS_CONTAINER_FLAG" "$IOS_CONTAINER_PATH" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$IOS_ARCHIVE_PATH" \
+            DEVELOPMENT_TEAM="$IOS_TEAM_ID" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="$IOS_SIGNING_IDENTITY" \
+            PROVISIONING_PROFILE="$IOS_PROFILE_UUID" \
+            PROVISIONING_PROFILE_SPECIFIER="$IOS_PROFILE_NAME" \
+            CURRENT_PROJECT_VERSION="$GITHUB_RUN_NUMBER" \
+            MARKETING_VERSION="1.0.0" \
+            > "$RUNNER_TEMP/ios-build.log" 2>&1; then
+            tail -n 200 "$RUNNER_TEMP/ios-build.log"
+            exit 1
+          fi
+
+          APP_PATH="$(find "$IOS_ARCHIVE_PATH/Products/Applications" -maxdepth 2 -type d -name '*.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "The signed archive does not contain an iOS application."
+            exit 1
+          fi
+          export APP_PATH
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          info_path = os.path.join(os.environ["APP_PATH"], "Info.plist")
+          with open(info_path, "rb") as stream:
+              info = plistlib.load(stream)
+          expected = {
+              "CFBundleIdentifier": "br.com.aptransp.app",
+              "CFBundleShortVersionString": "1.0.0",
+              "CFBundleVersion": os.environ["GITHUB_RUN_NUMBER"],
+          }
+          for key, value in expected.items():
+              actual = info.get(key)
+              if actual != value:
+                  raise SystemExit(f"Archive has unexpected {key}: {actual!r}; expected {value!r}")
+          print("Archive Bundle ID, marketing version, and build number validated.")
+          PY
+
+          codesign --verify --deep --strict "$APP_PATH"
+          security cms -D -i "$APP_PATH/embedded.mobileprovision" > "$RUNNER_TEMP/archive-profile.plist"
+          export ARCHIVE_PROFILE_PLIST="$RUNNER_TEMP/archive-profile.plist"
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          with open(os.environ["ARCHIVE_PROFILE_PLIST"], "rb") as stream:
+              profile = plistlib.load(stream)
+          if profile.get("UUID") != os.environ["IOS_PROFILE_UUID"]:
+              raise SystemExit("The archive was signed with a different provisioning profile.")
+          print("Archive provisioning profile UUID matches the installed App Store profile.")
+          PY
+          echo "Signed iOS archive created."
+
+      - name: Create App Store Connect export options
+        run: |
+          set -euo pipefail
+          export IOS_EXPORT_OPTIONS="$IOS_SIGNING_DIR/ExportOptions.plist"
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          options = {
+              "method": "app-store-connect",
+              "destination": "export",
+              "signingStyle": "manual",
+              "teamID": os.environ["IOS_TEAM_ID"],
+              "signingCertificate": "Apple Distribution",
+              "provisioningProfiles": {
+                  "br.com.aptransp.app": os.environ["IOS_PROFILE_NAME"]
+              },
+              "uploadSymbols": True,
+          }
+          with open(os.environ["IOS_EXPORT_OPTIONS"], "wb") as stream:
+              plistlib.dump(options, stream, sort_keys=False)
+          PY
+
+      - name: Export signed IPA
+        run: |
+          set -euo pipefail
+          mkdir -p "$IOS_EXPORT_PATH"
+          if ! xcodebuild -exportArchive \
+            -archivePath "$IOS_ARCHIVE_PATH" \
+            -exportPath "$IOS_EXPORT_PATH" \
+            -exportOptionsPlist "$IOS_SIGNING_DIR/ExportOptions.plist" \
+            > "$RUNNER_TEMP/ios-export.log" 2>&1; then
+            tail -n 200 "$RUNNER_TEMP/ios-export.log"
+            exit 1
+          fi
+
+          IPA_PATH="$(find "$IOS_EXPORT_PATH" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+          if [ -z "$IPA_PATH" ]; then
+            echo "xcodebuild -exportArchive completed without producing an IPA."
+            exit 1
+          fi
+          echo "IOS_IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+          echo "IPA exported: $(basename "$IPA_PATH")"
+
+      - name: Diagnose exported IPA
+        run: |
+          set -euo pipefail
+          INSPECT_DIR="$RUNNER_TEMP/ipa-inspect"
+          mkdir -p "$INSPECT_DIR"
+          ditto -x -k "$IOS_IPA_PATH" "$INSPECT_DIR"
+          APP_PATH="$(find "$INSPECT_DIR/Payload" -maxdepth 2 -type d -name '*.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "The exported IPA has no app in its Payload directory."
+            exit 1
+          fi
+
+          codesign --verify --deep --strict "$APP_PATH"
+          SIGNATURE_DETAILS="$RUNNER_TEMP/ipa-signature.txt"
+          codesign -dv --verbose=4 "$APP_PATH" 2> "$SIGNATURE_DETAILS"
+          SIGNATURE_IDENTITY="$(sed -n 's/^Authority=//p' "$SIGNATURE_DETAILS" | head -n 1)"
+          SIGNATURE_TEAM="$(sed -n 's/^TeamIdentifier=//p' "$SIGNATURE_DETAILS" | head -n 1)"
+          if [ "$SIGNATURE_IDENTITY" != "$IOS_SIGNING_IDENTITY" ]; then
+            echo "Exported IPA is not signed with the imported Apple Distribution identity."
+            exit 1
+          fi
+
+          export APP_PATH
+          python3 - <<'PY'
+          import os
+          import plistlib
+          import zipfile
+          from pathlib import Path
+
+          info_path = Path(os.environ["APP_PATH"]) / "Info.plist"
+          with info_path.open("rb") as stream:
+              info = plistlib.load(stream)
+          expected = ("br.com.aptransp.app", "1.0.0", os.environ["GITHUB_RUN_NUMBER"])
+          actual = (
+              info.get("CFBundleIdentifier"),
+              info.get("CFBundleShortVersionString"),
+              info.get("CFBundleVersion"),
+          )
+          if actual != expected:
+              raise SystemExit(f"Exported IPA metadata mismatch: {actual!r}; expected {expected!r}")
+
+          ipa = Path(os.environ["IOS_IPA_PATH"])
+          size = ipa.stat().st_size
+          print(f"Bundle ID: {actual[0]}")
+          print(f"Version: {actual[1]}")
+          print(f"Build number: {actual[2]}")
+          print(f"IPA: {ipa.name}")
+          print(f"IPA size: {size:,} bytes")
+          print(f"Signing identity: {os.environ['SIGNATURE_IDENTITY']}")
+          print(f"Provisioning profile: {os.environ['IOS_PROFILE_NAME']}")
+          PY
+        env:
+          SIGNATURE_IDENTITY: ${{ env.IOS_SIGNING_IDENTITY }}
+
+      - name: Upload IPA to App Store Connect / TestFlight
+        id: testflight-upload
+        timeout-minutes: 30
+        env:
+          ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          set -euo pipefail
+          PRIVATE_KEYS_DIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$PRIVATE_KEYS_DIR"
+          chmod 700 "$PRIVATE_KEYS_DIR"
+          KEY_PATH="$PRIVATE_KEYS_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          export KEY_PATH ASC_API_KEY_BASE64
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          value = "".join(os.environ["ASC_API_KEY_BASE64"].split())
+          if not value:
+              raise SystemExit("ASC_API_KEY_BASE64 is empty")
+          key_path = Path(os.environ["KEY_PATH"])
+          key_path.write_bytes(base64.b64decode(value, validate=True))
+          key_path.chmod(0o600)
+          PY
+          echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+          if ! xcrun altool --upload-app \
+            --type ios \
+            --file "$IOS_IPA_PATH" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID" \
+            --verbose \
+            > "$RUNNER_TEMP/testflight-upload.log" 2>&1; then
+            tail -n 200 "$RUNNER_TEMP/testflight-upload.log"
+            exit 1
+          fi
+          tail -n 40 "$RUNNER_TEMP/testflight-upload.log"
+          echo "App Store Connect accepted the IPA upload."
+
+      - name: Upload IPA, archive, and build logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: APTRANSP-iOS-unsigned-${{ github.run_number }}
-          path: ${{ runner.temp }}/APTRANSP.xcarchive
-          if-no-files-found: error
+          name: APTRANSP-iOS-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/APTRANSP-export/*.ipa
+            ${{ runner.temp }}/APTRANSP.xcarchive
+            ${{ runner.temp }}/ios-*.log
+            ${{ runner.temp }}/xcode-list.log
+            ${{ runner.temp }}/xcode-settings.log
+          if-no-files-found: warn
           retention-days: 14
+
+      - name: Remove signing assets and temporary keychain
+        if: always()
+        run: |
+          set +e
+          if [ -n "${ASC_KEY_PATH:-}" ]; then
+            rm -f "$ASC_KEY_PATH"
+          fi
+          security delete-keychain "$IOS_KEYCHAIN_PATH" >/dev/null 2>&1
+          security default-keychain -d user -s "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1
+          security list-keychains -d user -s "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1
+          if [ -n "${IOS_PROFILE_UUID:-}" ]; then
+            rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$IOS_PROFILE_UUID.mobileprovision"
+          fi
+          rm -f "$IOS_PROFILE_PATH" "$IOS_SIGNING_DIR/distribution.p12"
+          rm -rf "$IOS_SIGNING_DIR" "$RUNNER_TEMP/ipa-inspect"
