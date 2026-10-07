@@ -16,12 +16,25 @@ concurrency:
 jobs:
   build-ios:
     name: Build APTRANSP for iOS and upload to TestFlight
-    runs-on: macos-15
+    runs-on: macos-26
     timeout-minutes: 60
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Verify Xcode iOS SDK for App Store Connect
+        run: |
+          set -euo pipefail
+          XCODE_VERSION="$(xcodebuild -version | awk '/^Xcode / { print $2; exit }')"
+          IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          IOS_SDK_MAJOR="${IOS_SDK_VERSION%%.*}"
+          echo "Xcode version: $XCODE_VERSION"
+          echo "iOS SDK version: $IOS_SDK_VERSION"
+          if [ "$IOS_SDK_MAJOR" -lt 26 ]; then
+            echo "::error::App Store Connect requires the iOS 26 SDK or later; this runner provides iOS SDK $IOS_SDK_VERSION."
+            exit 1
+          fi
 
       - name: Define temporary build paths
         run: |
