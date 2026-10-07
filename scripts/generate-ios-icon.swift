@@ -52,7 +52,8 @@ let contents: [String: Any] = [
 try JSONSerialization.data(withJSONObject: contents, options: [.prettyPrinted, .sortedKeys])
     .write(to: output.appendingPathComponent("Contents.json"))
 
-guard let result = NSBitmapImageRep(contentsOf: output.appendingPathComponent("AppIcon-1024.png")),
+let generatedIconData = try Data(contentsOf: output.appendingPathComponent("AppIcon-1024.png"))
+guard let result = NSBitmapImageRep(data: generatedIconData),
       result.pixelsWide == 1024, result.pixelsHigh == 1024, !result.hasAlpha else {
     fatalError("iOS requires an opaque 1024x1024 app icon")
 }
