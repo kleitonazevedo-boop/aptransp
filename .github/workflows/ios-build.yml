@@ -26,7 +26,8 @@ jobs:
       - name: Verify Xcode iOS SDK for App Store Connect
         run: |
           set -euo pipefail
-          XCODE_VERSION="$(xcodebuild -version | awk '/^Xcode / { print $2; exit }')"
+          xcodebuild -version > "$RUNNER_TEMP/xcode-version.txt"
+          XCODE_VERSION="$(sed -n '1s/^Xcode //p' "$RUNNER_TEMP/xcode-version.txt")"
           IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
           IOS_SDK_MAJOR="${IOS_SDK_VERSION%%.*}"
           echo "Xcode version: $XCODE_VERSION"
