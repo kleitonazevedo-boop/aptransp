@@ -53,7 +53,6 @@ const GtfsImportScreen = ({ onBack }: Props) => {
       const result = await gtfsService.syncPublishedPackage((stage, detail) => {
         const labels: Record<string, string> = {
           downloading: "Baixando pacote GTFS",
-          validating: "Validando integridade",
           validating: "Validando banco SQLite",
           ready: "Sincronização concluída",
         };
