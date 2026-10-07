@@ -38,7 +38,7 @@ function snapshotPath(version: string) {
   return path.join(SNAPSHOT_DIR, `gtfs-${version}.zip`);
 }
 function sqliteSnapshotPath(version: string) {
-  return path.join(SNAPSHOT_DIR, `gtfs-${version}.sqlite`);
+  return path.join(SNAPSHOT_DIR, `aptransp_gtfs_${version}.db`);
 }
 
 async function createSnapshot(version: string, files: Express.Multer.File[]) {
@@ -275,7 +275,7 @@ gtfsRouter.get("/sync/sqlite/:version", async (req,res)=>{
     const filePath=sqliteSnapshotPath(result.rows[0].version);
     try { await stat(filePath); } catch { return res.status(404).json({status:"error",message:"Snapshot SQLite GTFS não encontrado"}); }
     res.setHeader("Content-Type","application/vnd.sqlite3");
-    res.setHeader("Content-Disposition",`attachment; filename="gtfs-${result.rows[0].version}.sqlite"`);
+    res.setHeader("Content-Disposition",`attachment; filename="aptransp_gtfs_${result.rows[0].version}.db"`);
     res.setHeader("Cache-Control","public, max-age=31536000, immutable");
     return createReadStream(filePath).pipe(res);
   } catch(error) {
