@@ -66,6 +66,16 @@ jobs:
       - name: Sync Capacitor iOS project
         run: npx cap sync ios
 
+      - name: Apply APTRANSP logo to iOS app icon
+        run: |
+          set -euo pipefail
+          ICON_SET="$(find ios -type d -name 'AppIcon.appiconset' -not -path '*/Pods/*' -print -quit)"
+          if [ -z "$ICON_SET" ]; then
+            echo "::error::The iOS app icon asset catalog was not found."
+            exit 1
+          fi
+          xcrun swift scripts/generate-ios-icon.swift src/assets/logo-aptransp.png "$ICON_SET"
+
       - name: Discover Xcode workspace, project, and scheme
         id: xcode
         run: |
