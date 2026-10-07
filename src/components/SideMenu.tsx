@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { Sheet, SheetContent, SheetTrigger } from "@/components/ui/sheet";
+import { Button } from "@/components/ui/button";
 import {
   Menu, Wallet, Map, Info, Route, Code2, ChevronDown, Radio, Terminal,
   Bell, Star, User as UserIcon, ShieldAlert, LogOut,
@@ -36,9 +37,9 @@ export const SideMenu = ({
   return (
     <Sheet open={open} onOpenChange={setOpen}>
       <SheetTrigger asChild>
-        <button aria-label="Abrir menu" className="text-white p-1"><Menu className="w-6 h-6" /></button>
+        <Button variant="ghost" size="icon" aria-label="Abrir menu" className="h-11 w-11 text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"><Menu className="w-6 h-6" /></Button>
       </SheetTrigger>
-      <SheetContent side="left" className="w-72 p-0 flex flex-col bg-brand-purple text-white border-0">
+      <SheetContent side="left" className="app-side-menu w-72 p-0 flex flex-col bg-brand-purple text-white border-0">
         <div className="p-6 flex items-center gap-3 border-b border-white/15">
           <Logo className="w-10 h-10" />
           <div>

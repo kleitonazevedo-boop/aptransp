@@ -76,6 +76,24 @@
     @apply mx-auto w-full max-w-md min-h-screen bg-background flex flex-col relative overflow-hidden;
   }
   .screen-padding { @apply px-5 py-6; }
+  .app-top-header {
+    padding-top: calc(env(safe-area-inset-top, 0px) + 1.5rem);
+    padding-left: max(1rem, env(safe-area-inset-left, 0px));
+    padding-right: max(1rem, env(safe-area-inset-right, 0px));
+  }
+  .app-side-menu {
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+    padding-left: env(safe-area-inset-left, 0px);
+  }
+  .app-side-menu > button {
+    top: calc(env(safe-area-inset-top, 0px) + 1rem);
+    min-width: 44px;
+    min-height: 44px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
 }
 
 @layer utilities {

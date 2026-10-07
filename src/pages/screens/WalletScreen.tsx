@@ -256,7 +256,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
 
   return (
     <div className="flex-1 flex flex-col bg-brand-purple relative overflow-hidden">
-      <header className="bg-brand-purple text-white px-4 pt-4 pb-6 flex items-center justify-between z-30 relative">
+      <header className="app-top-header bg-brand-purple text-white pb-6 flex items-center justify-between z-30 relative">
         <SideMenu
           onBalance={() => { setBalance(null); setActive("balance"); }}
           onMap={() => setActive("map")}
