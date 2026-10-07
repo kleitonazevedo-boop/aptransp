@@ -2,8 +2,8 @@
  * Importação GTFS 100% local: os arquivos .txt são lidos no dispositivo
  * e gravados diretamente no SQLite (aptransp.db). Sem upload.
  */
-import { unzipSync, strFromU8 } from "fflate";
 import { gtfsRepository, GTFS_FILES, type GtfsImportRow, type GtfsFileName, type GtfsSyncMetadata } from "@/repositories/gtfsRepository";
+import { downloadGtfsSnapshot, getGtfsSnapshotDb } from "@/database/database";
 
 export { GTFS_FILES };
 export type { GtfsFileName };
@@ -17,6 +17,12 @@ export interface GtfsSyncManifest {
   totalRecords: number;
   package: {
     format: "zip";
+    sizeBytes: number;
+    sha256: string;
+    url: string;
+  };
+  sqlite: {
+    format: "sqlite";
     sizeBytes: number;
     sha256: string;
     url: string;
@@ -56,7 +62,10 @@ export const gtfsService = {
         !manifest.version ||
         manifest.package?.format !== "zip" ||
         !manifest.package?.url ||
-        !manifest.package?.sha256
+        !manifest.package?.sha256 ||
+        manifest.sqlite?.format !== "sqlite" ||
+        !manifest.sqlite?.url ||
+        !manifest.sqlite?.sha256
       ) {
         throw new Error("Manifesto GTFS inválido");
       }
@@ -81,45 +90,37 @@ export const gtfsService = {
       await gtfsRepository.setSyncStatus("downloading");
       onProgress?.("downloading", manifest.version);
 
-      const response = await fetch(manifest.package.url, { cache: "no-store" });
-      if (!response.ok) throw new Error(`Download GTFS falhou (HTTP ${response.status})`);
-      const bytes = new Uint8Array(await response.arrayBuffer());
-      if (bytes.byteLength !== manifest.package.sizeBytes) {
-        throw new Error(`Tamanho do pacote inválido: esperado ${manifest.package.sizeBytes}, recebido ${bytes.byteLength}`);
+      // O plugin nativo grava o arquivo em streaming diretamente na pasta de
+      // bancos SQLite. Não materializamos os ~68 MB no heap JavaScript.
+      await downloadGtfsSnapshot(manifest.sqlite.url);
+
+      onProgress?.("validating", "estrutura e metadados");
+      const snapshot = await getGtfsSnapshotDb(manifest.version);
+      const metadata = await snapshot.one<{ version: string; total_records: number }>(
+        "SELECT version, total_records FROM gtfs_snapshot_metadata WHERE id=1;",
+      );
+      if (!metadata || metadata.version !== manifest.version) {
+        throw new Error("Versão interna do snapshot GTFS não confere");
+      }
+      if (Number(metadata.total_records) !== manifest.totalRecords) {
+        throw new Error(`Total GTFS divergente: manifesto ${manifest.totalRecords}, snapshot ${metadata.total_records}`);
       }
 
-      onProgress?.("validating", "SHA-256");
-      if (!globalThis.crypto?.subtle) throw new Error("SHA-256 indisponível neste dispositivo");
-      const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
-      const sha256 = Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, "0")).join("");
-      if (sha256.toLowerCase() !== manifest.package.sha256.toLowerCase()) {
-        throw new Error("SHA-256 do pacote GTFS não confere");
-      }
-
-      onProgress?.("extracting", manifest.version);
-      const zip = unzipSync(bytes);
-      const files: Partial<Record<GtfsFileName, string>> = {};
-      for (const name of GTFS_FILES) {
-        const entry = zip[name];
-        if (entry) files[name] = strFromU8(entry);
-      }
-
-      await gtfsRepository.setSyncStatus("importing");
-      onProgress?.("importing", manifest.version);
-      const counts = await gtfsRepository.importPackageAtomic(files, (file, done, total) => {
-        onProgress?.("importing", `${file}: ${done}/${total}`);
-      });
-      const importedTotal = Object.values(counts).reduce((sum, n) => sum + n, 0);
-      if (importedTotal !== manifest.totalRecords) {
-        throw new Error(`Total GTFS divergente: manifesto ${manifest.totalRecords}, importado ${importedTotal}`);
+      const requiredTables = ["gtfs_agency","gtfs_routes","gtfs_stops","gtfs_trips","gtfs_stop_times"];
+      for (const table of requiredTables) {
+        const found = await snapshot.one<{ name: string }>(
+          "SELECT name FROM sqlite_master WHERE type='table' AND name=?;",
+          [table],
+        );
+        if (!found) throw new Error(`Tabela obrigatória ausente no snapshot: ${table}`);
       }
 
       await gtfsRepository.activateSyncVersion({
         version: manifest.version,
         publishedAt: manifest.publishedAt,
         totalRecords: manifest.totalRecords,
-        sha256: manifest.package.sha256,
-        sizeBytes: manifest.package.sizeBytes,
+        sha256: manifest.sqlite.sha256,
+        sizeBytes: manifest.sqlite.sizeBytes,
       });
       onProgress?.("ready", manifest.version);
       return { updated: true, version: manifest.version };
