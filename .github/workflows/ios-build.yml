@@ -348,6 +348,11 @@ jobs:
             echo "xcodebuild -exportArchive completed without producing an IPA."
             exit 1
           fi
+          EXPECTED_IPA_PATH="$IOS_EXPORT_PATH/APTRANSP-1.0.0-${GITHUB_RUN_NUMBER}.ipa"
+          if [ "$IPA_PATH" != "$EXPECTED_IPA_PATH" ]; then
+            mv "$IPA_PATH" "$EXPECTED_IPA_PATH"
+          fi
+          IPA_PATH="$EXPECTED_IPA_PATH"
           echo "IOS_IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
           echo "IPA exported: $(basename "$IPA_PATH")"
 
