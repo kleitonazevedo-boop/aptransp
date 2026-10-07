@@ -51,7 +51,6 @@ jobs:
         run: npx cap sync ios
 
       - name: Import Apple Distribution certificate and install profile
-        name: Import signing assets
         env:
           IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
           IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
@@ -102,6 +101,7 @@ jobs:
             echo "No valid Apple Distribution identity was found in the imported P12."
             exit 1
           fi
+          export IDENTITY IOS_PROFILE_PATH IOS_SIGNING_DIR
 
           security cms -D -i "$IOS_PROFILE_PATH" > "$IOS_SIGNING_DIR/profile.plist"
           export APTRANSP_BUNDLE_ID="br.com.aptransp.app"
@@ -152,9 +152,6 @@ jobs:
               env_file.write(f"IOS_TEAM_ID={team_id}\n")
               env_file.write(f"IOS_SIGNING_IDENTITY={os.environ['IDENTITY']}\n")
           PY
-        env:
-          IDENTITY: ${{ env.IOS_SIGNING_IDENTITY }}
-
       - name: Discover Xcode workspace, project, and scheme
         id: xcode
         run: |
@@ -177,6 +174,7 @@ jobs:
             > "$RUNNER_TEMP/xcode-list.json" 2> "$RUNNER_TEMP/xcode-list.log"
 
           export XCODE_LIST_JSON="$RUNNER_TEMP/xcode-list.json"
+          export CONTAINER_FLAG CONTAINER_PATH
           python3 - <<'PY'
           import json
           import os
@@ -198,10 +196,6 @@ jobs:
               env_file.write(f"IOS_SCHEME={scheme}\n")
           print(f"Using Xcode {os.environ['CONTAINER_FLAG']} and scheme: {scheme}")
           PY
-        env:
-          CONTAINER_FLAG: ${{ env.IOS_CONTAINER_FLAG }}
-          CONTAINER_PATH: ${{ env.IOS_CONTAINER_PATH }}
-
       - name: Validate Bundle ID and Xcode target
         run: |
           set -euo pipefail
@@ -422,6 +416,7 @@ jobs:
           mkdir -p "$PRIVATE_KEYS_DIR"
           chmod 700 "$PRIVATE_KEYS_DIR"
           KEY_PATH="$PRIVATE_KEYS_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
           export KEY_PATH ASC_API_KEY_BASE64
           python3 - <<'PY'
           import base64
@@ -461,6 +456,7 @@ jobs:
             ${{ runner.temp }}/ios-*.log
             ${{ runner.temp }}/xcode-list.log
             ${{ runner.temp }}/xcode-settings.log
+            ${{ runner.temp }}/testflight-upload.log
           if-no-files-found: warn
           retention-days: 14
 
