@@ -260,7 +260,7 @@ gtfsRouter.get("/sync/manifest", async (req,res)=>{
       publishedAt:row.published_at,
       totalRecords:Number(row.total_records??0),
       package:{format:"zip",sizeBytes:info.size,sha256:checksum,url:`${base}/api/v1/gtfs/sync/download/${encodeURIComponent(row.version)}`},
-      sqlite:{format:"sqlite",sizeBytes:sqliteInfo.size,sha256:sqliteChecksum,url:`${base}/api/v1/gtfs/sync/sqlite/${encodeURIComponent(row.version)}`}
+      sqlite:{format:"sqlite",sizeBytes:sqliteInfo.size,sha256:sqliteChecksum,url:`${base}/api/v1/gtfs/sync/sqlite/aptransp_gtfs_${encodeURIComponent(row.version)}.db`}
     });
   } catch(error) {
     console.error("[gtfs/sync/manifest]",error);
@@ -268,7 +268,7 @@ gtfsRouter.get("/sync/manifest", async (req,res)=>{
   }
 });
 
-gtfsRouter.get("/sync/sqlite/:version", async (req,res)=>{
+gtfsRouter.get("/sync/sqlite/aptransp_gtfs_:version.db", async (req,res)=>{
   try {
     const result=await pool.query(`SELECT version FROM gtfs_versions WHERE version=$1 AND status='published' LIMIT 1`,[req.params.version]);
     if(!result.rows[0]) return res.status(404).json({status:"error",message:"Versão GTFS publicada não encontrada"});
