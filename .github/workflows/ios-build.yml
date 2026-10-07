@@ -173,25 +173,32 @@ jobs:
               path.chmod(0o600)
           PY
 
-          KEYCHAIN_PASSWORD="$(uuidgen)"
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$IOS_KEYCHAIN_PATH"
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
           security import "$IOS_SIGNING_DIR/distribution.p12" \
-            -k "$IOS_KEYCHAIN_PATH" \
             -P "$IOS_P12_PASSWORD" \
-            -T /usr/bin/codesign \
-            -T /usr/bin/security
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$IOS_KEYCHAIN_PATH"
           security set-key-partition-list \
-            -S apple-tool:,apple:,codesign: \
-            -s -k "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
-          security list-keychains -d user -s "$IOS_KEYCHAIN_PATH" "$HOME/Library/Keychains/login.keychain-db"
-          security default-keychain -d user -s "$IOS_KEYCHAIN_PATH"
+            -S apple-tool:,apple: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$IOS_KEYCHAIN_PATH"
+          security list-keychains -d user \
+            -s "$IOS_KEYCHAIN_PATH" login.keychain-db
 
-          IDENTITY="$(security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH" |
-            awk -F '"' '/Apple Distribution:/ { print $2 }' | head -n 1)"
+          IDENTITIES="$(security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH")"
+          if ! printf '%s\\n' "$IDENTITIES" | grep -Fq "Apple Distribution:"; then
+            echo "::error::No valid Apple Distribution signing identity was found in the temporary keychain."
+            exit 1
+          fi
+          IDENTITY="$(printf '%s\\n' "$IDENTITIES" | awk -F '"' '/Apple Distribution:/ { print $2; exit }')"
           if [ -z "$IDENTITY" ]; then
-            echo "No valid Apple Distribution identity was found in the imported P12."
+            echo "::error::No valid Apple Distribution signing identity was found in the temporary keychain."
             exit 1
           fi
           export IDENTITY IOS_PROFILE_PATH IOS_SIGNING_DIR
