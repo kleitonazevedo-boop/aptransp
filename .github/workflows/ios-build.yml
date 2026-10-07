@@ -192,11 +192,11 @@ jobs:
             -s "$IOS_KEYCHAIN_PATH" login.keychain-db
 
           IDENTITIES="$(security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH")"
-          if ! printf '%s\\n' "$IDENTITIES" | grep -Fq "Apple Distribution:"; then
+          if ! printf '%s\n' "$IDENTITIES" | grep -Fq "Apple Distribution:"; then
             echo "::error::No valid Apple Distribution signing identity was found in the temporary keychain."
             exit 1
           fi
-          IDENTITY="$(printf '%s\\n' "$IDENTITIES" | awk -F '"' '/Apple Distribution:/ { print $2; exit }')"
+          IDENTITY="$(printf '%s\n' "$IDENTITIES" | awk -F '"' '/Apple Distribution:/ { print $2; exit }')"
           if [ -z "$IDENTITY" ]; then
             echo "::error::No valid Apple Distribution signing identity was found in the temporary keychain."
             exit 1
