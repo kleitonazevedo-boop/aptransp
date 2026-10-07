@@ -8,22 +8,22 @@ guard CommandLine.arguments.count == 3 else {
 let source = CommandLine.arguments[1]
 let output = URL(fileURLWithPath: CommandLine.arguments[2], isDirectory: true)
 guard let logoData = try? Data(contentsOf: URL(fileURLWithPath: source)),
-      let logoBitmap = NSBitmapImageRep(data: logoData) else {
-    fatalError("Unable to decode the APTRANSP logo PNG at \(source)")
+      let logoBitmap = NSBitmapImageRep(data: logoData),
+      let logoCGImage = logoBitmap.cgImage else {
+    fatalError("Unable to decode the APTRANSP logo PNG at \\(source)")
 }
-let logo = NSImage(size: NSSize(width: 1024, height: 1024))
-logo.addRepresentation(logoBitmap)
 
-guard let bitmap = NSBitmapImageRep(
-    bitmapDataPlanes: nil, pixelsWide: 1024, pixelsHigh: 1024,
-    bitsPerSample: 8, samplesPerPixel: 3, hasAlpha: false,
-    isPlanar: false, colorSpaceName: .deviceRGB,
-    bytesPerRow: 0, bitsPerPixel: 0
+let colorSpace = CGColorSpaceCreateDeviceRGB()
+guard let context = CGContext(
+    data: nil,
+    width: 1024,
+    height: 1024,
+    bitsPerComponent: 8,
+    bytesPerRow: 0,
+    space: colorSpace,
+    bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
 ) else {
-    fatalError("Unable to allocate the opaque 1024x1024 iOS icon bitmap")
-}
-guard let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
-    fatalError("Unable to create the graphics context for the iOS icon bitmap")
+    fatalError("Unable to create the 1024x1024 iOS icon bitmap context")
 }
 
 // Use the application's existing theme as the opaque iOS icon background.
@@ -34,21 +34,18 @@ guard let config = try JSONSerialization.jsonObject(with: manifest) as? [String:
     fatalError("The application manifest must specify a theme color")
 }
 
-NSGraphicsContext.saveGraphicsState()
-NSGraphicsContext.current = context
-NSColor(
-    calibratedRed: CGFloat((rgb >> 16) & 255) / 255,
+context.setFillColor(
+    red: CGFloat((rgb >> 16) & 255) / 255,
     green: CGFloat((rgb >> 8) & 255) / 255,
     blue: CGFloat(rgb & 255) / 255,
     alpha: 1
-).setFill()
-NSBezierPath(rect: NSRect(x: 0, y: 0, width: 1024, height: 1024)).fill()
-context.imageInterpolation = .high
-logo.draw(in: NSRect(x: 0, y: 0, width: 1024, height: 1024))
-context.flushGraphics()
-NSGraphicsContext.restoreGraphicsState()
+)
+context.fill(CGRect(x: 0, y: 0, width: 1024, height: 1024))
+context.interpolationQuality = .high
+context.draw(logoCGImage, in: CGRect(x: 0, y: 0, width: 1024, height: 1024))
 
-guard let png = bitmap.representation(using: .png, properties: [:]) else {
+guard let renderedIcon = context.makeImage(),
+      let png = NSBitmapImageRep(cgImage: renderedIcon).representation(using: .png, properties: [:]) else {
     fatalError("Unable to encode the iOS icon")
 }
 try FileManager.default.createDirectory(at: output, withIntermediateDirectories: true)
