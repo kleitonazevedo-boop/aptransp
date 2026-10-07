@@ -18,16 +18,18 @@ jobs:
     name: Build APTRANSP for iOS and upload to TestFlight
     runs-on: macos-15
     timeout-minutes: 60
-    env:
-      IOS_SIGNING_DIR: ${{ runner.temp }}/aptransp-ios-signing
-      IOS_KEYCHAIN_PATH: ${{ runner.temp }}/aptransp-ios-signing/build.keychain-db
-      IOS_PROFILE_PATH: ${{ runner.temp }}/aptransp-ios-signing/profile.mobileprovision
-      IOS_ARCHIVE_PATH: ${{ runner.temp }}/APTRANSP.xcarchive
-      IOS_EXPORT_PATH: ${{ runner.temp }}/APTRANSP-export
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Define temporary build paths
+        run: |
+          echo "IOS_SIGNING_DIR=$RUNNER_TEMP/aptransp-ios-signing" >> "$GITHUB_ENV"
+          echo "IOS_KEYCHAIN_PATH=$RUNNER_TEMP/aptransp-ios-signing/build.keychain-db" >> "$GITHUB_ENV"
+          echo "IOS_PROFILE_PATH=$RUNNER_TEMP/aptransp-ios-signing/profile.mobileprovision" >> "$GITHUB_ENV"
+          echo "IOS_ARCHIVE_PATH=$RUNNER_TEMP/APTRANSP.xcarchive" >> "$GITHUB_ENV"
+          echo "IOS_EXPORT_PATH=$RUNNER_TEMP/APTRANSP-export" >> "$GITHUB_ENV"
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -463,6 +465,9 @@ jobs:
         if: always()
         run: |
           set +e
+          IOS_SIGNING_DIR="${IOS_SIGNING_DIR:-$RUNNER_TEMP/aptransp-ios-signing}"
+          IOS_KEYCHAIN_PATH="${IOS_KEYCHAIN_PATH:-$IOS_SIGNING_DIR/build.keychain-db}"
+          IOS_PROFILE_PATH="${IOS_PROFILE_PATH:-$IOS_SIGNING_DIR/profile.mobileprovision}"
           if [ -n "${ASC_KEY_PATH:-}" ]; then
             rm -f "$ASC_KEY_PATH"
           fi
