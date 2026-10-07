@@ -82,12 +82,12 @@
     padding-right: max(1rem, env(safe-area-inset-right, 0px));
   }
   .app-side-menu {
-    padding-top: env(safe-area-inset-top, 0px);
+    padding-top: calc(env(safe-area-inset-top, 0px) + 1.5rem);
     padding-bottom: env(safe-area-inset-bottom, 0px);
     padding-left: env(safe-area-inset-left, 0px);
   }
   .app-side-menu > button {
-    top: calc(env(safe-area-inset-top, 0px) + 1rem);
+    top: calc(env(safe-area-inset-top, 0px) + 3rem);
     min-width: 44px;
     min-height: 44px;
     display: flex;

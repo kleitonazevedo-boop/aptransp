@@ -40,14 +40,14 @@ export const SideMenu = ({
         <Button variant="ghost" size="icon" aria-label="Abrir menu" className="h-11 w-11 text-primary-foreground hover:bg-primary-foreground/10 hover:text-primary-foreground"><Menu className="w-6 h-6" /></Button>
       </SheetTrigger>
       <SheetContent side="left" className="app-side-menu w-72 p-0 flex flex-col bg-brand-purple text-white border-0">
-        <div className="p-6 flex items-center gap-3 border-b border-white/15">
-          <Logo className="w-10 h-10" />
-          <div>
+        <div className="p-6 pr-16 shrink-0 flex items-center gap-3 border-b border-white/15">
+          <Logo className="w-10 h-10 shrink-0" />
+          <div className="min-w-0">
             <p className="font-bold">APTRANSP</p>
             <p className="text-xs opacity-75 truncate max-w-[180px]">{user?.email ?? "Menu"}</p>
           </div>
         </div>
-        <nav className="flex-1 p-3 space-y-1 overflow-y-auto">
+        <nav className="flex-1 min-h-0 p-3 space-y-1 overflow-y-auto">
           <MenuItem icon={<UserIcon className="w-5 h-5" />} label="Meu Perfil" onClick={() => { onProfile(); close(); }} />
           <MenuItem icon={<Wallet className="w-5 h-5" />} label="Consulta de saldo" onClick={() => { onBalance(); close(); }} />
           <MenuItem icon={<Map className="w-5 h-5" />} label="Mapa do transporte" onClick={() => { onMap(); close(); }} />
@@ -72,7 +72,7 @@ export const SideMenu = ({
             </div>
           )}
         </nav>
-        <div className="p-3 border-t border-white/15 space-y-1">
+        <div className="p-3 shrink-0 border-t border-white/15 space-y-1">
           <MenuItem icon={<Info className="w-5 h-5" />} label="Sobre" onClick={() => { onAbout(); close(); }} />
           <MenuItem icon={<LogOut className="w-5 h-5" />} label="Sair" onClick={async () => { await signOut(); close(); }} />
         </div>
