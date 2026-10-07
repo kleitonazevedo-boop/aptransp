@@ -52,6 +52,97 @@ jobs:
       - name: Sync Capacitor iOS project
         run: npx cap sync ios
 
+      - name: Discover Xcode workspace, project, and scheme
+        id: xcode
+        run: |
+          set -euo pipefail
+          WORKSPACE="$(find ios -maxdepth 6 -type d -name '*.xcworkspace' -not -path '*/Pods/*' -print -quit)"
+          if [ -n "$WORKSPACE" ]; then
+            CONTAINER_FLAG="-workspace"
+            CONTAINER_PATH="$WORKSPACE"
+          else
+            PROJECT="$(find ios -maxdepth 6 -type d -name '*.xcodeproj' -not -path '*/Pods/*' -print -quit)"
+            if [ -z "$PROJECT" ]; then
+              echo "No Xcode workspace or project was generated under ios/."
+              exit 1
+            fi
+            CONTAINER_FLAG="-project"
+            CONTAINER_PATH="$PROJECT"
+          fi
+
+          xcodebuild -list -json "$CONTAINER_FLAG" "$CONTAINER_PATH" \
+            > "$RUNNER_TEMP/xcode-list.json" 2> "$RUNNER_TEMP/xcode-list.log"
+
+          export XCODE_LIST_JSON="$RUNNER_TEMP/xcode-list.json"
+          export CONTAINER_FLAG CONTAINER_PATH
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["XCODE_LIST_JSON"], encoding="utf-8") as stream:
+              data = json.load(stream)
+          metadata = data.get("workspace") or data.get("project") or {}
+          schemes = metadata.get("schemes", [])
+          if "App" in schemes:
+              scheme = "App"
+          elif len(schemes) == 1:
+              scheme = schemes[0]
+          else:
+              raise SystemExit(f"Could not select a unique app scheme. Xcode schemes: {schemes}")
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"IOS_CONTAINER_FLAG={os.environ['CONTAINER_FLAG']}\n")
+              env_file.write(f"IOS_CONTAINER_PATH={os.environ['CONTAINER_PATH']}\n")
+              env_file.write(f"IOS_SCHEME={scheme}\n")
+          print(f"Using Xcode {os.environ['CONTAINER_FLAG']} and scheme: {scheme}")
+          PY
+      - name: Validate Bundle ID and Xcode target
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const config = JSON.parse(fs.readFileSync("capacitor.config.json", "utf8"));
+          if (config.appId !== "br.com.aptransp.app") {
+            throw new Error(`Unexpected Capacitor appId: ${config.appId}`);
+          }
+          console.log(`Capacitor Bundle ID: ${config.appId}`);
+          NODE
+
+          xcodebuild -showBuildSettings -json \
+            "$IOS_CONTAINER_FLAG" "$IOS_CONTAINER_PATH" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            > "$RUNNER_TEMP/xcode-build-settings.json" 2> "$RUNNER_TEMP/xcode-settings.log"
+
+          export XCODE_SETTINGS_JSON="$RUNNER_TEMP/xcode-build-settings.json"
+          python3 - <<'PY'
+          import json
+          import os
+
+          expected = "br.com.aptransp.app"
+          with open(os.environ["XCODE_SETTINGS_JSON"], encoding="utf-8") as stream:
+              targets = json.load(stream)
+          apps = [
+              item for item in targets
+              if item.get("buildSettings", {}).get("PRODUCT_TYPE") == "com.apple.product-type.application"
+          ]
+          matches = [
+              item for item in apps
+              if item.get("buildSettings", {}).get("PRODUCT_BUNDLE_IDENTIFIER") == expected
+          ]
+          if len(matches) != 1:
+              details = [
+                  f"{item.get('target')}: {item.get('buildSettings', {}).get('PRODUCT_BUNDLE_IDENTIFIER')}"
+                  for item in apps
+              ]
+              raise SystemExit(
+                  f"Expected exactly one iOS app target with Bundle ID {expected}; found: {details}"
+              )
+          print(f"Xcode app target: {matches[0].get('target')}")
+          print(f"Xcode Bundle ID: {expected}")
+          PY
+
       - name: Import Apple Distribution certificate and install profile
         env:
           IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
@@ -154,97 +245,6 @@ jobs:
               env_file.write(f"IOS_TEAM_ID={team_id}\n")
               env_file.write(f"IOS_SIGNING_IDENTITY={os.environ['IDENTITY']}\n")
           PY
-      - name: Discover Xcode workspace, project, and scheme
-        id: xcode
-        run: |
-          set -euo pipefail
-          WORKSPACE="$(find ios -maxdepth 6 -type d -name '*.xcworkspace' -not -path '*/Pods/*' -print -quit)"
-          if [ -n "$WORKSPACE" ]; then
-            CONTAINER_FLAG="-workspace"
-            CONTAINER_PATH="$WORKSPACE"
-          else
-            PROJECT="$(find ios -maxdepth 6 -type d -name '*.xcodeproj' -not -path '*/Pods/*' -print -quit)"
-            if [ -z "$PROJECT" ]; then
-              echo "No Xcode workspace or project was generated under ios/."
-              exit 1
-            fi
-            CONTAINER_FLAG="-project"
-            CONTAINER_PATH="$PROJECT"
-          fi
-
-          xcodebuild -list -json "$CONTAINER_FLAG" "$CONTAINER_PATH" \
-            > "$RUNNER_TEMP/xcode-list.json" 2> "$RUNNER_TEMP/xcode-list.log"
-
-          export XCODE_LIST_JSON="$RUNNER_TEMP/xcode-list.json"
-          export CONTAINER_FLAG CONTAINER_PATH
-          python3 - <<'PY'
-          import json
-          import os
-
-          with open(os.environ["XCODE_LIST_JSON"], encoding="utf-8") as stream:
-              data = json.load(stream)
-          metadata = data.get("workspace") or data.get("project") or {}
-          schemes = metadata.get("schemes", [])
-          if "App" in schemes:
-              scheme = "App"
-          elif len(schemes) == 1:
-              scheme = schemes[0]
-          else:
-              raise SystemExit(f"Could not select a unique app scheme. Xcode schemes: {schemes}")
-
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
-              env_file.write(f"IOS_CONTAINER_FLAG={os.environ['CONTAINER_FLAG']}\n")
-              env_file.write(f"IOS_CONTAINER_PATH={os.environ['CONTAINER_PATH']}\n")
-              env_file.write(f"IOS_SCHEME={scheme}\n")
-          print(f"Using Xcode {os.environ['CONTAINER_FLAG']} and scheme: {scheme}")
-          PY
-      - name: Validate Bundle ID and Xcode target
-        run: |
-          set -euo pipefail
-          node - <<'NODE'
-          const fs = require("node:fs");
-          const config = JSON.parse(fs.readFileSync("capacitor.config.json", "utf8"));
-          if (config.appId !== "br.com.aptransp.app") {
-            throw new Error(`Unexpected Capacitor appId: ${config.appId}`);
-          }
-          console.log(`Capacitor Bundle ID: ${config.appId}`);
-          NODE
-
-          xcodebuild -showBuildSettings -json \
-            "$IOS_CONTAINER_FLAG" "$IOS_CONTAINER_PATH" \
-            -scheme "$IOS_SCHEME" \
-            -configuration Release \
-            -destination 'generic/platform=iOS' \
-            > "$RUNNER_TEMP/xcode-build-settings.json" 2> "$RUNNER_TEMP/xcode-settings.log"
-
-          export XCODE_SETTINGS_JSON="$RUNNER_TEMP/xcode-build-settings.json"
-          python3 - <<'PY'
-          import json
-          import os
-
-          expected = "br.com.aptransp.app"
-          with open(os.environ["XCODE_SETTINGS_JSON"], encoding="utf-8") as stream:
-              targets = json.load(stream)
-          apps = [
-              item for item in targets
-              if item.get("buildSettings", {}).get("PRODUCT_TYPE") == "com.apple.product-type.application"
-          ]
-          matches = [
-              item for item in apps
-              if item.get("buildSettings", {}).get("PRODUCT_BUNDLE_IDENTIFIER") == expected
-          ]
-          if len(matches) != 1:
-              details = [
-                  f"{item.get('target')}: {item.get('buildSettings', {}).get('PRODUCT_BUNDLE_IDENTIFIER')}"
-                  for item in apps
-              ]
-              raise SystemExit(
-                  f"Expected exactly one iOS app target with Bundle ID {expected}; found: {details}"
-              )
-          print(f"Xcode app target: {matches[0].get('target')}")
-          print(f"Xcode Bundle ID: {expected}")
-          PY
-
       - name: Archive signed iOS app
         run: |
           set -euo pipefail
