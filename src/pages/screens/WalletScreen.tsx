@@ -19,7 +19,8 @@ import {
   ArrowLeftRight,
   ChevronRight,
 } from "lucide-react";
-const mapaImg = "/mapa-transporte.jpg";
+import mapaAsset from "@/assets/mapa-transporte.webp.asset.json";
+const mapaImg = mapaAsset.url;
 
 interface Props {
   onAbout: () => void;
