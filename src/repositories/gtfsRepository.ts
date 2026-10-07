@@ -1,4 +1,4 @@
-import { getDb, newId } from "@/database/database";
+import { getDb, getGtfsSnapshotDb, newId, type LocalDb } from "@/database/database";
 
 /** Arquivos GTFS suportados e mapeamento tabela/colunas. */
 export const GTFS_FILE_MAP = {
@@ -107,6 +107,17 @@ function haversineMeters(aLat: number, aLon: number, bLat: number, bLon: number)
 
 const CHUNK = 400;
 
+async function getGtfsReadDb(): Promise<LocalDb> {
+  const main = await getDb();
+  const meta = await main.one<GtfsSyncMetadata>("SELECT * FROM gtfs_sync_metadata WHERE id = 1;");
+  if (meta?.status === "ready" && meta.version) {
+    try { return await getGtfsSnapshotDb(meta.version); }
+    catch (error) { console.warn("[gtfs] snapshot indisponível; usando GTFS legado do banco principal", error); }
+  }
+  return main;
+}
+
+
 export const gtfsRepository = {
   async getSyncMetadata(): Promise<GtfsSyncMetadata | null> {
     const db = await getDb();
@@ -163,7 +174,7 @@ export const gtfsRepository = {
   },
 
   async counts(): Promise<Record<string, number>> {
-    const db = await getDb();
+    const db = await getGtfsReadDb();
     const result: Record<string, number> = {};
     for (const { table } of Object.values(GTFS_FILE_MAP)) {
       const row = await db.one<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table};`);
@@ -173,7 +184,7 @@ export const gtfsRepository = {
   },
 
   async hasData(): Promise<boolean> {
-    const db = await getDb();
+    const db = await getGtfsReadDb();
     const row = await db.one<{ n: number }>("SELECT COUNT(*) AS n FROM gtfs_stops;");
     return Number(row?.n ?? 0) > 0;
   },
@@ -311,7 +322,7 @@ export const gtfsRepository = {
 
   /** Paradas próximas — consulta offline com bounding box + haversine. */
   async nearbyStops(lat: number, lon: number, radiusMeters = 1000, limit = 30): Promise<NearbyStop[]> {
-    const db = await getDb();
+    const db = await getGtfsReadDb();
     const dLat = radiusMeters / 111_320;
     const dLon = radiusMeters / (111_320 * Math.max(0.1, Math.cos((lat * Math.PI) / 180)));
     const rows = await db.all<{ stop_id: string; stop_name: string; stop_lat: number; stop_lon: number }>(
@@ -330,7 +341,7 @@ export const gtfsRepository = {
   async nearbyLines(lat: number, lon: number, radiusMeters = 1000, limit = 40): Promise<NearbyGtfsLine[]> {
     const stops: NearbyStop[] = await this.nearbyStops(lat, lon, radiusMeters, 25);
     if (!stops.length) return [];
-    const db = await getDb();
+    const db = await getGtfsReadDb();
     const ids = stops.map((s) => s.stop_id);
     const inList = ids.map(() => "?").join(", ");
     const rows = await db.all<{
@@ -366,7 +377,7 @@ export const gtfsRepository = {
 
   /** Próximos horários programados de uma parada (offline, via stop_times). */
   async nextDepartures(stopId: string, limit = 8) {
-    const db = await getDb();
+    const db = await getGtfsReadDb();
     const now = new Date();
     const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:00`;
     return db.all<{ departure_time: string; route_short_name: string; trip_headsign: string }>(
