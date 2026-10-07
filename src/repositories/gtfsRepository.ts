@@ -172,10 +172,55 @@ export const gtfsRepository = {
     return result;
   },
 
-  async hasData(): Promise<boolean> {
+  async validateDataset(): Promise<{ valid: boolean; counts: Record<string, number>; tables: Record<string, string | null> }> {
     const db = await getDb();
-    const row = await db.one<{ n: number }>("SELECT COUNT(*) AS n FROM gtfs_stops;");
-    return Number(row?.n ?? 0) > 0;
+    const schema = await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table';");
+    const available = new Set(schema.map((row) => row.name));
+    const specs = [
+      { key: "stops", candidates: ["gtfs_stops", "stops"] },
+      { key: "routes", candidates: ["gtfs_routes", "routes"] },
+      { key: "trips", candidates: ["gtfs_trips", "trips"] },
+      { key: "stop_times", candidates: ["gtfs_stop_times", "stop_times"] },
+      { key: "shapes", candidates: ["gtfs_shapes", "shapes"] },
+    ];
+    const counts: Record<string, number> = {};
+    const tables: Record<string, string | null> = {};
+
+    for (const spec of specs) {
+      const found = spec.candidates.filter((name) => available.has(name));
+      if (!found.length) {
+        tables[spec.key] = null;
+        counts[spec.key] = 0;
+        console.warn("[GTFS-DB] " + spec.key + ": table missing");
+        continue;
+      }
+      let selected = found[0];
+      let selectedCount = -1;
+      for (const table of found) {
+        const row = await db.one<{ n: number }>('SELECT COUNT(*) AS n FROM "' + table + '";');
+        const count = Number(row?.n ?? 0);
+        if (count > selectedCount) {
+          selected = table;
+          selectedCount = count;
+        }
+      }
+      tables[spec.key] = selected;
+      counts[spec.key] = Math.max(0, selectedCount);
+      console.info("[GTFS-DB] " + spec.key + ": " + counts[spec.key] + " (table " + selected + ")");
+    }
+
+    const required = ["stops", "routes", "trips", "stop_times"];
+    const missing = required.filter((key) => !tables[key] || counts[key] === 0);
+    const valid = missing.length === 0;
+    if (!valid) {
+      console.warn("[GTFS-DB] Base GTFS local não instalada ou sem dados. Ausentes/vazias: " + missing.join(", "));
+    }
+    return { valid, counts, tables };
+  },
+
+  async hasData(): Promise<boolean> {
+    const status = await this.validateDataset();
+    return status.valid;
   },
 
   /**
@@ -300,59 +345,152 @@ export const gtfsRepository = {
     return counts;
   },
 
-  /** Paradas próximas — consulta offline com bounding box + haversine. */
+  /** Paradas próximas — diagnóstico offline com bounding box + haversine. */
   async nearbyStops(lat: number, lon: number, radiusMeters = 1000, limit = 30): Promise<NearbyStop[]> {
+    if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
+      throw new Error("Localização inválida: coordenadas GPS ausentes ou fora do intervalo.");
+    }
+    if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) {
+      throw new Error("Raio de busca inválido.");
+    }
+
     const db = await getDb();
+    const status = await this.validateDataset();
+    const table = status.tables.stops;
+    if (!table || status.counts.stops === 0) throw new Error("Base GTFS local não instalada ou sem dados.");
+
     const dLat = radiusMeters / 111_320;
-    const dLon = radiusMeters / (111_320 * Math.max(0.1, Math.cos((lat * Math.PI) / 180)));
-    const rows = await db.all<{ stop_id: string; stop_name: string; stop_lat: number; stop_lon: number }>(
-      `SELECT stop_id, stop_name, stop_lat, stop_lon FROM gtfs_stops
-       WHERE stop_lat BETWEEN ? AND ? AND stop_lon BETWEEN ? AND ? LIMIT 800;`,
-      [lat - dLat, lat + dLat, lon - dLon, lon + dLon],
+    const cosLat = Math.cos((lat * Math.PI) / 180);
+    const dLon = radiusMeters / (111_320 * Math.max(0.1, Math.abs(cosLat)));
+    const minLat = Math.max(-90, lat - dLat);
+    const maxLat = Math.min(90, lat + dLat);
+    const minLon = Math.max(-180, lon - dLon);
+    const maxLon = Math.min(180, lon + dLon);
+    console.info("[GTFS-NEARBY] latitude: " + lat);
+    console.info("[GTFS-NEARBY] longitude: " + lon);
+    console.info("[GTFS-NEARBY] radius: " + radiusMeters + " m");
+    console.info("[GTFS-NEARBY] total stops: " + status.counts.stops);
+
+    const rows = await db.all<{ stop_id: string; stop_name: string; stop_lat: number | string; stop_lon: number | string }>(
+      'SELECT stop_id, stop_name, stop_lat, stop_lon FROM "' + table + '" ' +
+      "WHERE CAST(stop_lat AS REAL) BETWEEN ? AND ? AND CAST(stop_lon AS REAL) BETWEEN ? AND ?;",
+      [minLat, maxLat, minLon, maxLon],
     );
-    return rows
-      .map((r) => ({ ...r, distanceMeters: haversineMeters(lat, lon, Number(r.stop_lat), Number(r.stop_lon)) }))
-      .filter((r) => r.distanceMeters <= radiusMeters)
-      .sort((a, b) => a.distanceMeters - b.distanceMeters)
-      .slice(0, limit);
+    console.info("[GTFS-NEARBY] stops in bbox: " + rows.length);
+
+    const validRows = rows.filter((row) => {
+      const stopLat = Number(row.stop_lat);
+      const stopLon = Number(row.stop_lon);
+      return Number.isFinite(stopLat) && Number.isFinite(stopLon) &&
+        stopLat >= -90 && stopLat <= 90 && stopLon >= -180 && stopLon <= 180;
+    });
+    console.info("[GTFS-NEARBY] valid numeric-coordinate stops in bbox: " + validRows.length);
+    if (validRows.length) {
+      const sample = validRows.slice(0, 3);
+      console.info("[GTFS-NEARBY] coordinate sample (lat,lon): " +
+        sample.map((row) => Number(row.stop_lat) + "," + Number(row.stop_lon)).join(" | "));
+    }
+
+    const withinRadius = validRows
+      .map((row) => ({
+        ...row,
+        stop_lat: Number(row.stop_lat),
+        stop_lon: Number(row.stop_lon),
+        distanceMeters: haversineMeters(lat, lon, Number(row.stop_lat), Number(row.stop_lon)),
+      }))
+      .filter((row) => row.distanceMeters <= radiusMeters)
+      .sort((a, b) => a.distanceMeters - b.distanceMeters);
+    console.info("[GTFS-NEARBY] stops in radius: " + withinRadius.length);
+    console.info("[GTFS-NEARBY] nearest stop distance: " +
+      (withinRadius.length ? Math.round(withinRadius[0].distanceMeters) + " m" : "none"));
+
+    return withinRadius.slice(0, limit);
   },
 
   /** Linhas que atendem as paradas próximas — offline via stop_times/trips/routes. */
-  async nearbyLines(lat: number, lon: number, radiusMeters = 1000, limit = 40): Promise<NearbyGtfsLine[]> {
-    const stops: NearbyStop[] = await this.nearbyStops(lat, lon, radiusMeters, 25);
-    if (!stops.length) return [];
+  async nearbyLines(
+    lat: number,
+    lon: number,
+    radiusMeters = 1000,
+    limit = 40,
+    nearbyStops?: NearbyStop[],
+  ): Promise<NearbyGtfsLine[]> {
+    const status = await this.validateDataset();
+    if (!status.valid) throw new Error("Base GTFS local não instalada ou sem dados.");
+    const stops = nearbyStops ?? await this.nearbyStops(lat, lon, radiusMeters, 25);
+    if (!stops.length) {
+      console.info("[GTFS-NEARBY] stop_times matched: 0 (no nearby stops)");
+      console.info("[GTFS-NEARBY] distinct trips referenced: 0");
+      console.info("[GTFS-NEARBY] trips matched: 0");
+      console.info("[GTFS-NEARBY] distinct routes referenced: 0");
+      console.info("[GTFS-NEARBY] routes found: 0");
+      return [];
+    }
+
     const db = await getDb();
-    const ids = stops.map((s) => s.stop_id);
+    const stopTable = status.tables.stop_times!;
+    const tripTable = status.tables.trips!;
+    const routeTable = status.tables.routes!;
+    const ids = stops.map((stop) => stop.stop_id);
     const inList = ids.map(() => "?").join(", ");
+    const stopTimesCount = await db.one<{ n: number }>(
+      'SELECT COUNT(*) AS n FROM "' + stopTable + '" WHERE stop_id IN (' + inList + ');',
+      ids,
+    );
+    const tripsReferenced = await db.one<{ n: number }>(
+      'SELECT COUNT(DISTINCT trip_id) AS n FROM "' + stopTable + '" WHERE stop_id IN (' + inList + ');',
+      ids,
+    );
+    const tripsMatched = await db.one<{ n: number }>(
+      'SELECT COUNT(DISTINCT st.trip_id) AS n FROM "' + stopTable + '" st ' +
+      'JOIN "' + tripTable + '" t ON t.trip_id = st.trip_id WHERE st.stop_id IN (' + inList + ');',
+      ids,
+    );
+    const routesReferenced = await db.one<{ n: number }>(
+      'SELECT COUNT(DISTINCT t.route_id) AS n FROM "' + stopTable + '" st ' +
+      'JOIN "' + tripTable + '" t ON t.trip_id = st.trip_id WHERE st.stop_id IN (' + inList + ');',
+      ids,
+    );
+    const routesFound = await db.one<{ n: number }>(
+      'SELECT COUNT(DISTINCT r.route_id) AS n FROM "' + stopTable + '" st ' +
+      'JOIN "' + tripTable + '" t ON t.trip_id = st.trip_id ' +
+      'JOIN "' + routeTable + '" r ON r.route_id = t.route_id WHERE st.stop_id IN (' + inList + ');',
+      ids,
+    );
+    console.info("[GTFS-NEARBY] stop_times matched: " + Number(stopTimesCount?.n ?? 0));
+    console.info("[GTFS-NEARBY] distinct trips referenced: " + Number(tripsReferenced?.n ?? 0));
+    console.info("[GTFS-NEARBY] trips matched: " + Number(tripsMatched?.n ?? 0));
+    console.info("[GTFS-NEARBY] distinct routes referenced: " + Number(routesReferenced?.n ?? 0));
+    console.info("[GTFS-NEARBY] routes found: " + Number(routesFound?.n ?? 0));
+
     const rows = await db.all<{
       route_id: string; route_short_name: string; route_long_name: string; route_type: string; stop_id: string;
     }>(
-      `SELECT DISTINCT r.route_id, r.route_short_name, r.route_long_name, r.route_type, st.stop_id
-         FROM gtfs_stop_times st
-         JOIN gtfs_trips t ON t.trip_id = st.trip_id
-         JOIN gtfs_routes r ON r.route_id = t.route_id
-        WHERE st.stop_id IN (${inList})
-        LIMIT 400;`,
+      'SELECT DISTINCT r.route_id, r.route_short_name, r.route_long_name, r.route_type, st.stop_id ' +
+      'FROM "' + stopTable + '" st JOIN "' + tripTable + '" t ON t.trip_id = st.trip_id ' +
+      'JOIN "' + routeTable + '" r ON r.route_id = t.route_id ' +
+      'WHERE st.stop_id IN (' + inList + ') LIMIT 400;',
       ids,
     );
-    const byStop = new Map(stops.map((s) => [s.stop_id, s]));
+    const byStop = new Map(stops.map((stop) => [stop.stop_id, stop]));
     const seen = new Set<string>();
-    const out: NearbyGtfsLine[] = [];
-    for (const r of rows) {
-      if (seen.has(r.route_id)) continue;
-      seen.add(r.route_id);
-      const s = byStop.get(r.stop_id);
-      out.push({
-        route_id: r.route_id,
-        route_short_name: r.route_short_name ?? "",
-        route_long_name: r.route_long_name ?? "",
-        route_type: String(r.route_type ?? ""),
-        stop_id: r.stop_id,
-        stop_name: s?.stop_name ?? "",
-        distanceMeters: s?.distanceMeters ?? 0,
+    const result: NearbyGtfsLine[] = [];
+    for (const row of rows) {
+      if (seen.has(row.route_id)) continue;
+      const stop = byStop.get(row.stop_id);
+      if (!stop) continue;
+      seen.add(row.route_id);
+      result.push({
+        route_id: row.route_id,
+        route_short_name: row.route_short_name ?? "",
+        route_long_name: row.route_long_name ?? "",
+        route_type: String(row.route_type ?? ""),
+        stop_id: row.stop_id,
+        stop_name: stop.stop_name ?? "",
+        distanceMeters: stop.distanceMeters,
       });
     }
-    return out.sort((a, b) => a.distanceMeters - b.distanceMeters).slice(0, limit);
+    return result.sort((a, b) => a.distanceMeters - b.distanceMeters).slice(0, limit);
   },
 
   /** Próximos horários programados de uma parada (offline, via stop_times). */

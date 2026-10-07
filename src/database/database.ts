@@ -7,6 +7,7 @@
  * Nenhuma chamada de rede é feita aqui. 100% offline.
  */
 import { Capacitor } from "@capacitor/core";
+import { Directory, Filesystem } from "@capacitor/filesystem";
 import {
   CapacitorSQLite,
   SQLiteConnection,
@@ -82,18 +83,163 @@ async function runMigrations(conn: SQLiteDBConnection) {
   );
 }
 
+let databaseSource = "existing-local-database";
+
+async function bundledDatabaseSeedExists(): Promise<boolean> {
+  if (typeof document === "undefined") return false;
+  try {
+    const url = new URL("/assets/databases/aptransp.db", document.baseURI);
+    const response = await fetch(url.toString(), { cache: "no-store" });
+    if (!response.ok) return false;
+    await response.body?.cancel();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function pragmaScalar(conn: SQLiteDBConnection, sql: string): Promise<unknown> {
+  const result = await conn.query(sql);
+  const first = (result.values ?? [])[0] as Record<string, unknown> | undefined;
+  return first ? (Object.values(first)[0] ?? null) : null;
+}
+
+async function logDatabaseDiagnostics(conn: SQLiteDBConnection): Promise<void> {
+  const databaseList = await conn.query("PRAGMA database_list;");
+  const databaseRows = (databaseList.values ?? []) as Array<Record<string, unknown>>;
+  const mainDatabase = databaseRows.find((row) => row.name === "main");
+  const databasePath = String(mainDatabase?.file ?? "");
+  const fileName = databasePath.split("/").pop() || "unknown";
+  let fileExists: boolean | null = null;
+  let fileSize: number | null = null;
+
+  if (Capacitor.getPlatform() === "ios" && fileName !== "unknown") {
+    try {
+      const stat = await Filesystem.stat({ path: fileName, directory: Directory.Documents });
+      fileExists = stat.type === "file";
+      fileSize = stat.size;
+    } catch {
+      fileExists = false;
+    }
+  } else if (isNative) {
+    fileExists = (await sqlite!.isDatabase(DB_NAME)).result === true;
+  }
+
+  console.info("[GTFS-DB] Database path: " + (databasePath || "unavailable"));
+  console.info("[GTFS-DB] Database file: " + fileName);
+  console.info("[GTFS-DB] Database file exists: " + String(fileExists));
+  console.info("[GTFS-DB] Database size bytes: " + (fileSize === null ? "unavailable" : String(fileSize)));
+  console.info("[GTFS-DB] Database source: " + databaseSource);
+
+  const integrity = String(await pragmaScalar(conn, "PRAGMA integrity_check;") ?? "unavailable");
+  const userVersion = Number(await pragmaScalar(conn, "PRAGMA user_version;") ?? 0);
+  const schemaVersionRow = await conn.query(
+    "SELECT COALESCE(MAX(version), 0) AS schema_version FROM schema_migrations;",
+  );
+  const schemaVersion = Number((schemaVersionRow.values?.[0] as { schema_version?: number } | undefined)?.schema_version ?? 0);
+
+  const sqliteSchemaVersion = Number(await pragmaScalar(conn, "PRAGMA schema_version;") ?? 0);
+  console.info("[GTFS-DB] integrity_check: " + integrity);
+  console.info("[GTFS-DB] user_version: " + userVersion);
+  console.info("[GTFS-DB] schema_version: " + schemaVersion);
+  console.info("[GTFS-DB] sqlite_schema_version: " + sqliteSchemaVersion);
+
+  const tableResult = await conn.query(
+    "SELECT name FROM sqlite_master WHERE type = 'table';",
+  );
+  const tableNames = new Set(
+    (tableResult.values ?? []).map((row) => String((row as { name?: unknown }).name ?? "")),
+  );
+  const tableSpecs = [
+    { label: "stops", aliases: ["gtfs_stops", "stops"] },
+    { label: "routes", aliases: ["gtfs_routes", "routes"] },
+    { label: "trips", aliases: ["gtfs_trips", "trips"] },
+    { label: "stop_times", aliases: ["gtfs_stop_times", "stop_times"] },
+    { label: "shapes", aliases: ["gtfs_shapes", "shapes"] },
+  ];
+  const counts: Record<string, number | null> = {};
+
+  for (const spec of tableSpecs) {
+    const table = spec.aliases.find((candidate) => tableNames.has(candidate));
+    if (!table) {
+      counts[spec.label] = null;
+      console.info("[GTFS-DB] " + spec.label + ": table missing");
+      continue;
+    }
+    const countResult = await conn.query('SELECT COUNT(*) AS n FROM "' + table + '";');
+    const count = Number((countResult.values?.[0] as { n?: number } | undefined)?.n ?? 0);
+    counts[spec.label] = count;
+    console.info("[GTFS-DB] " + spec.label + ": " + count);
+  }
+
+  const invalidTables = ["stops", "routes", "trips", "stop_times"].filter(
+    (table) => counts[table] === null || counts[table] === 0,
+  );
+  if (integrity !== "ok") {
+    console.error("[GTFS-DB] Database integrity check failed.");
+  } else if (invalidTables.length) {
+    console.warn(
+      "[GTFS-DB] Base GTFS local não instalada ou sem dados; tabelas ausentes/vazias: " +
+      invalidTables.join(", "),
+    );
+  } else {
+    console.info("[GTFS-DB] Essential GTFS tables contain data.");
+  }
+}
+
 async function openDatabase(): Promise<LocalDb> {
   sqlite = new SQLiteConnection(CapacitorSQLite);
   if (!isNative) await setupWebStore();
 
-  const existing = (await sqlite.isConnection(DB_NAME, false)).result;
-  dbConn = existing
+  const hasConnection = (await sqlite.isConnection(DB_NAME, false)).result === true;
+  const hasLocalDatabase = (await sqlite.isDatabase(DB_NAME)).result === true;
+
+  if (isNative && !hasConnection && !hasLocalDatabase) {
+    if (await bundledDatabaseSeedExists()) {
+      console.info("[GTFS-DB] Bundled seed found at assets/databases/aptransp.db; copying to writable SQLite storage.");
+      try {
+        await sqlite.copyFromAssets(false);
+        databaseSource = "bundled-seed";
+      } catch (error) {
+        databaseSource = "bundle-seed-copy-failed";
+        console.error("[GTFS-DB] Failed to copy bundled database seed.", error instanceof Error ? error.message : "copy failed");
+      }
+    } else {
+      databaseSource = "new-local-database-no-bundled-seed";
+      console.warn("[GTFS-DB] No bundled seed found at assets/databases/aptransp.db; a new local database would contain no GTFS rows.");
+    }
+  } else if (hasLocalDatabase || hasConnection) {
+    databaseSource = "existing-local-database";
+  }
+
+  const existingConnection = (await sqlite.isConnection(DB_NAME, false)).result === true;
+  dbConn = existingConnection
     ? await sqlite.retrieveConnection(DB_NAME, false)
     : await sqlite.createConnection(DB_NAME, false, "no-encryption", 1, false);
 
   await dbConn.open();
   await dbConn.execute("PRAGMA foreign_keys = ON;");
+
+  const integrityBeforeMigrations = String(
+    await pragmaScalar(dbConn, "PRAGMA integrity_check;") ?? "unavailable",
+  );
+  console.info("[GTFS-DB] integrity_check before migrations: " + integrityBeforeMigrations);
+  if (integrityBeforeMigrations !== "ok") {
+    throw new Error("O banco SQLite local está inválido (integrity_check).");
+  }
+
+  const currentUserVersion = Number(await pragmaScalar(dbConn, "PRAGMA user_version;") ?? 0);
+  const supportedSchemaVersion = MIGRATIONS[MIGRATIONS.length - 1]?.version ?? 0;
+  console.info("[GTFS-DB] user_version before migrations: " + currentUserVersion);
+  if (currentUserVersion > supportedSchemaVersion) {
+    throw new Error("O banco SQLite foi criado por uma versão mais recente do aplicativo.");
+  }
+
   await runMigrations(dbConn);
+  if (currentUserVersion < supportedSchemaVersion) {
+    await dbConn.execute("PRAGMA user_version = " + supportedSchemaVersion + ";");
+  }
+  await logDatabaseDiagnostics(dbConn);
   await persist();
   ready = true;
   console.log("[db] aptransp.db pronto (offline)");

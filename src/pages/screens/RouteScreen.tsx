@@ -256,17 +256,35 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
     setError(null); setLoading(true); setContentMode("nearby-lines");
     try {
       const loc = await getCurrentLocation();
-      const hasGtfs = await gtfsRepository.hasData();
-      setGtfsMissing(!hasGtfs);
-      if (!hasGtfs) { setNearbyLines([]); return; }
-      const [lines, stops] = await Promise.all([
-        gtfsRepository.nearbyLines(loc.latitude, loc.longitude, 1000),
-        gtfsRepository.nearbyStops(loc.latitude, loc.longitude, 1000),
-      ]);
+      const latitude = loc.latitude;
+      const longitude = loc.longitude;
+      const radius = 1000;
+      console.info("[GTFS-NEARBY] latitude: " + latitude);
+      console.info("[GTFS-NEARBY] longitude: " + longitude);
+      console.info("[GTFS-NEARBY] radius: " + radius + " m");
+      if (typeof latitude !== "number" || typeof longitude !== "number" ||
+          !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+          latitude === 0 || longitude === 0 ||
+          latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        throw new Error("Localização inválida. Verifique se o GPS retornou latitude e longitude válidas.");
+      }
+
+      const dataset = await gtfsRepository.validateDataset();
+      setGtfsMissing(!dataset.valid);
+      if (!dataset.valid) {
+        console.warn("[GTFS-NEARBY] Base GTFS local não instalada ou sem dados.");
+        setNearbyLines([]);
+        return;
+      }
+
+      const stops = await gtfsRepository.nearbyStops(latitude, longitude, radius);
+      const lines = await gtfsRepository.nearbyLines(latitude, longitude, radius, 40, stops);
       setNearbyLines(lines);
       void drawNearbyMarkers(stops, loc);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao buscar linhas próximas.");
+      const message = e instanceof Error ? e.message : "Falha ao buscar linhas próximas.";
+      console.error("[GTFS-NEARBY] Nearby query failed: " + message);
+      setError(message);
     } finally { setLoading(false); }
   };
 
@@ -550,7 +568,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
               </div>
               {nearbyLines.length === 0 ? (
                 <p className="text-xs text-blue-900/60 py-3 text-center">
-                  {gtfsMissing ? "Base GTFS não importada. Vá em Administrador → Importação SPTrans (GTFS)."
+                  {gtfsMissing ? "Base GTFS local não instalada ou sem dados."
                                : "Nenhuma linha próxima na base offline."}
                 </p>
               ) : (
