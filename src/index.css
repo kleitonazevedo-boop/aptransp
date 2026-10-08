@@ -73,7 +73,10 @@
 
 @layer components {
   .app-shell {
-    @apply mx-auto w-full max-w-md bg-background flex flex-col relative overflow-hidden;\n    height: 100vh;\n    height: 100dvh;\n    min-height: 0;
+    @apply mx-auto w-full max-w-md bg-background flex flex-col relative overflow-hidden;
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
   }
   .screen-padding { @apply px-5 py-6; }
   .app-top-header {
