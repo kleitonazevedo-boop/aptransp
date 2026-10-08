@@ -10,6 +10,7 @@ import {
 } from "@/services/placesService";
 import { reverseGeocode } from "@/services/geocodingService";
 import { getCurrentLocation } from "@/services/locationService";
+import { queryNearbyTransit, NearbyDataError } from "@/services/nearbyTransitService";
 import {
   computeRoutes, formatDistance, formatDuration,
   type RouteResult, type TravelMode,
@@ -53,7 +54,10 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   const [favorites, setFavorites] = useState<FavoriteRoute[]>([]);
   const [nearbyLines, setNearbyLines] = useState<NearbyGtfsLine[]>([]);
   const [nearbyStops, setNearbyStops] = useState<NearbyStop[]>([]);
+  const [nearbyState, setNearbyState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const [nearbyError, setNearbyError] = useState<string | null>(null);
   const [gtfsMissing, setGtfsMissing] = useState(false);
+  const [isOnline, setIsOnline] = useState(connectivityService.isOnline());
   const [gtfsSyncRunning, setGtfsSyncRunning] = useState(false);
   const [gtfsSyncMessage, setGtfsSyncMessage] = useState("");
   const [gtfsSyncError, setGtfsSyncError] = useState<string | null>(null);
@@ -68,46 +72,61 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   const polylineRef = useRef<google.maps.Polyline | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
 
+  useEffect(() => connectivityService.subscribe(setIsOnline), []);
+
   // ---------- Load profile / recent / favorites
   useEffect(() => { void loadRecent(); }, [user]);
   const loadRecent = async () => { setRecent(await historyService.listRecent(5)); };
   const loadFavorites = async () => { setFavorites(await favoritesService.list(10)); };
 
-  // ---------- Init map (always, used by route + nearby modes)
+  // ---------- Google Maps is an online-only layer; GTFS lookups stay local.
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!hasGoogleKey()) return;
+      if (!isOnline || !hasGoogleKey() || mapInstance.current) return;
       try {
         const maps = await loadGoogleMaps();
         if (cancelled || !mapRef.current || mapInstance.current) return;
         mapInstance.current = new maps.Map(mapRef.current, {
           center: { lat: -23.5505, lng: -46.6333 },
           zoom: 12, disableDefaultUI: true, zoomControl: true, clickableIcons: false,
+          gestureHandling: "cooperative",
         });
-      } catch (e) { console.error("[RouteScreen] map:", e); }
+      } catch (e) { console.warn("[RouteScreen] Google Maps indisponível."); }
     })();
     return () => { cancelled = true; };
-  }, [contentMode]);
+  }, [contentMode, isOnline]);
+
+  // Drop stale suggestions on disconnect so a selection cannot trigger online place details.
+  useEffect(() => {
+    if (!isOnline) {
+      setOriginSuggestions([]);
+      setDestinationSuggestions([]);
+    }
+  }, [isOnline]);
 
   // ---------- Autocomplete
   useEffect(() => {
-    if (focused !== "origin") return;
+    if (focused !== "origin" || !isOnline) return;
     const t = setTimeout(async () => {
       try { setOriginSuggestions(await autocompletePlaces(originText)); } catch (e) { console.error(e); }
     }, 250);
     return () => clearTimeout(t);
-  }, [originText, focused]);
+  }, [originText, focused, isOnline]);
 
   useEffect(() => {
-    if (focused !== "destination") return;
+    if (focused !== "destination" || !isOnline) return;
     const t = setTimeout(async () => {
       try { setDestinationSuggestions(await autocompletePlaces(destinationText)); } catch (e) { console.error(e); }
     }, 250);
     return () => clearTimeout(t);
-  }, [destinationText, focused]);
+  }, [destinationText, focused, isOnline]);
 
   const pickSuggestion = async (which: "origin" | "destination", s: AutocompleteSuggestion) => {
+    if (!connectivityService.isOnline()) {
+      setError("A busca de endereços precisa de internet. As consultas de linhas e paradas continuam offline.");
+      return;
+    }
     try {
       const d = await placeDetails(s.placeId);
       const point: SelectedPoint = { label: d.displayName || s.primary, latitude: d.latitude, longitude: d.longitude };
@@ -123,10 +142,10 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   const useMyLocation = async (): Promise<SelectedPoint | null> => {
     try {
       const loc = await getCurrentLocation();
-      const geo = await reverseGeocode(loc.latitude, loc.longitude);
       const point: SelectedPoint = { label: "Minha localização", latitude: loc.latitude, longitude: loc.longitude };
       setOrigin(point);
-      setOriginText(geo.formattedAddress ?? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`);
+      const geo = isOnline ? await reverseGeocode(loc.latitude, loc.longitude) : null;
+      setOriginText(geo?.formattedAddress ?? `${loc.latitude.toFixed(5)}, ${loc.longitude.toFixed(5)}`);
       setOriginSuggestions([]);
       return point;
     } catch (e) {
@@ -175,8 +194,11 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   }, [origin, destination, originText, destinationText, mode, user]);
 
   const drawRoute = async (r: RouteResult) => {
-    const map = mapInstance.current; if (!map) return;
-    const maps = await loadGoogleMaps();
+    const map = mapInstance.current;
+    if (!isOnline || !map) return;
+    let maps: typeof google.maps;
+    try { maps = await loadGoogleMaps(); }
+    catch { console.warn("[RouteScreen] Mapa indisponível; mantendo consulta GTFS local."); return; }
     polylineRef.current?.setMap(null);
     markersRef.current.forEach((m) => m.setMap(null));
     markersRef.current = [];
@@ -277,15 +299,8 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
       const dataset = await gtfsRepository.validateDataset();
       setGtfsMissing(!dataset.valid);
       if (dataset.valid && (contentMode === "nearby-lines" || contentMode === "nearby-stations")) {
-        const loc = await getCurrentLocation();
-        const radius = contentMode === "nearby-lines" ? 1000 : 1500;
-        const stops = await gtfsRepository.nearbyStops(loc.latitude, loc.longitude, radius);
-        if (contentMode === "nearby-lines") {
-          setNearbyLines(await gtfsRepository.nearbyLines(loc.latitude, loc.longitude, 1000, 40, stops));
-        } else {
-          setNearbyStops(stops);
-        }
-        void drawNearbyMarkers(stops, loc);
+        setNearbyState("idle");
+        setNearbyError("Dados instalados. Toque novamente em Linhas próximas ou Estações próximas para consultar.");
       }
     } catch (error) {
       setGtfsSyncError(error instanceof Error ? error.message : "Não foi possível instalar os dados offline.");
@@ -296,71 +311,86 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   };
 
   useEffect(() => {
-    if (contentMode !== "nearby-lines" && contentMode !== "nearby-stations") return;
+    if (!isOnline || (contentMode !== "nearby-lines" && contentMode !== "nearby-stations")) return;
     let active = true;
     void gtfsService.checkRemoteVersion()
       .then(({ updateAvailable }) => { if (active) setGtfsUpdateAvailable(updateAvailable); })
       .catch(() => { /* sem rede, a base local permanece disponível */ });
     return () => { active = false; };
-  }, [contentMode]);
+  }, [contentMode, isOnline]);
 
   const loadNearbyBuses = async () => {
-    setError(null); setLoading(true); setContentMode("nearby-lines");
+    setError(null);
+    setNearbyError(null);
+    setNearbyState("loading");
+    setNearbyLines([]);
+    setLoading(true);
+    setContentMode("nearby-lines");
     try {
       const loc = await getCurrentLocation();
-      const latitude = loc.latitude;
-      const longitude = loc.longitude;
-      const radius = 1000;
-      console.info("[GTFS-NEARBY] latitude: " + latitude);
-      console.info("[GTFS-NEARBY] longitude: " + longitude);
-      console.info("[GTFS-NEARBY] radius: " + radius + " m");
-      if (typeof latitude !== "number" || typeof longitude !== "number" ||
-          !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
-          latitude === 0 || longitude === 0 ||
-          latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
-        throw new Error("Localização inválida. Verifique se o GPS retornou latitude e longitude válidas.");
-      }
-
-      const dataset = await gtfsRepository.validateDataset();
-      setGtfsMissing(!dataset.valid);
-      if (!dataset.valid) {
-        console.warn("[GTFS-NEARBY] Base GTFS local não instalada ou sem dados.");
-        setNearbyLines([]);
-        return;
-      }
-
-      const stops = await gtfsRepository.nearbyStops(latitude, longitude, radius);
-      const lines = await gtfsRepository.nearbyLines(latitude, longitude, radius, 40, stops);
-      setNearbyLines(lines);
-      void drawNearbyMarkers(stops, loc);
+      console.info("[GTFS-NEARBY] latitude: " + loc.latitude);
+      console.info("[GTFS-NEARBY] longitude: " + loc.longitude);
+      console.info("[GTFS-NEARBY] radius: 1000 m");
+      const result = await queryNearbyTransit(loc, "lines", 1000);
+      setGtfsMissing(false);
+      setNearbyLines(result.lines);
+      setNearbyState("ready");
+      void drawNearbyMarkers(result.stops, loc);
     } catch (e) {
-      const message = e instanceof Error ? e.message : "Falha ao buscar linhas próximas.";
+      const message = e instanceof Error ? e.message : "Não foi possível consultar os dados locais.";
+      if (e instanceof NearbyDataError && e.code === "GTFS_NOT_INSTALLED") {
+        setGtfsMissing(true);
+      }
       console.error("[GTFS-NEARBY] Nearby query failed: " + message);
-      setError(message);
-    } finally { setLoading(false); }
+      setNearbyError(message);
+      setNearbyState("error");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const loadNearbyStations = async () => {
-    setError(null); setLoading(true); setContentMode("nearby-stations");
+    setError(null);
+    setNearbyError(null);
+    setNearbyState("loading");
+    setNearbyStops([]);
+    setLoading(true);
+    setContentMode("nearby-stations");
     try {
       const loc = await getCurrentLocation();
-      const hasGtfs = await gtfsRepository.hasData();
-      setGtfsMissing(!hasGtfs);
-      if (!hasGtfs) { setNearbyStops([]); return; }
-      const stops = await gtfsRepository.nearbyStops(loc.latitude, loc.longitude, 1500);
-      setNearbyStops(stops);
-      void drawNearbyMarkers(stops, loc);
+      console.info("[GTFS-NEARBY] latitude: " + loc.latitude);
+      console.info("[GTFS-NEARBY] longitude: " + loc.longitude);
+      console.info("[GTFS-NEARBY] radius: 1500 m");
+      const result = await queryNearbyTransit(loc, "stops", 1500);
+      setGtfsMissing(false);
+      setNearbyStops(result.stops);
+      setNearbyState("ready");
+      void drawNearbyMarkers(result.stops, loc);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao buscar estações próximas.");
-    } finally { setLoading(false); }
+      const message = e instanceof Error ? e.message : "Não foi possível consultar os dados locais.";
+      if (e instanceof NearbyDataError && e.code === "GTFS_NOT_INSTALLED") {
+        setGtfsMissing(true);
+      }
+      setNearbyError(message);
+      setNearbyState("error");
+    } finally {
+      setLoading(false);
+    }
   };
 
   const drawNearbyMarkers = async (
     stops: NearbyStop[],
     center: { latitude: number; longitude: number },
   ) => {
-    const map = mapInstance.current; if (!map) return;
-    const maps = await loadGoogleMaps();
+    const map = mapInstance.current;
+    if (!isOnline || !map) return;
+    let maps: typeof google.maps;
+    try {
+      maps = await loadGoogleMaps();
+    } catch {
+      console.warn("[RouteScreen] Mapa indisponível; mantendo a consulta GTFS local.");
+      return;
+    }
     polylineRef.current?.setMap(null);
     markersRef.current.forEach((m) => m.setMap(null));
     markersRef.current = [];
@@ -391,7 +421,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
 
   // ---------- UI
   return (
-    <div className={`flex-1 flex flex-col ${embedded ? "bg-transparent" : "bg-white"}`}>
+    <div className={`flex-1 min-h-0 flex flex-col ${embedded ? "bg-transparent" : "bg-white"}`}>
       {!embedded && (
         <>
           <header className="bg-brand-purple text-white px-4 pt-4 pb-3 flex items-center justify-between">
@@ -405,7 +435,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
         </>
       )}
 
-      <div className={`flex flex-col overflow-y-auto flex-1 ${embedded ? "" : "bg-amber-50"}`}>
+      <div className={`flex min-h-0 flex-col overflow-y-auto overscroll-contain touch-pan-y flex-1 pb-[calc(1rem+env(safe-area-inset-bottom))] ${embedded ? "" : "bg-amber-50"}`}>
         {/* Inputs */}
         <div className="p-3 space-y-3">
           <div className="bg-white rounded-2xl p-3 space-y-2 shadow-sm relative">
@@ -493,10 +523,16 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
         {/* Card principal — muda conforme contentMode */}
         <div className="px-3 pb-6 space-y-3">
           {/* Mapa (sempre montado, fica oculto no default/favorites) */}
-          <div ref={mapRef}
-               className={`w-full h-56 rounded-2xl bg-slate-100 shadow-sm ${
+          <div className={`relative w-full h-[clamp(10rem,28vh,14rem)] rounded-2xl bg-slate-100 shadow-sm overflow-hidden touch-pan-y ${
                  contentMode === "default" || contentMode === "favorites" ? "hidden" : ""
-               }`} />
+               }`}>
+            <div ref={mapRef} className={`absolute inset-0 ${isOnline ? "" : "invisible"}`} />
+            {!isOnline && (
+              <div className="absolute inset-0 flex items-center justify-center px-5 text-center text-xs text-slate-600">
+                O mapa precisa de internet. Linhas e paradas próximas continuam disponíveis offline.
+              </div>
+            )}
+          </div>
 
           {/* Modo: default → rotas recentes */}
           {contentMode === "default" && (
@@ -621,7 +657,13 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
               {nearbyLines.length === 0 ? (
                 <div className="py-3 text-center">
                   <p className="text-xs text-blue-900/60">
-                    {gtfsMissing ? "Base de transporte não instalada" : "Nenhuma linha próxima na base offline."}
+                    {nearbyError
+                      ? (gtfsMissing ? "Base de transporte não instalada ou sem dados." : nearbyError)
+                      : nearbyState === "loading"
+                        ? "Obtendo localização e consultando a base local…"
+                        : nearbyState === "ready"
+                          ? "Nenhuma linha próxima na base offline."
+                          : "Toque em Linhas próximas para consultar os dados locais."}
                   </p>
                   {gtfsMissing && (
                     <button onClick={() => void syncGtfsDatabase()} disabled={gtfsSyncRunning}
@@ -678,7 +720,13 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
               {nearbyStops.length === 0 ? (
                 <div className="py-3 text-center">
                   <p className="text-xs text-blue-900/60">
-                    {gtfsMissing ? "Base de transporte não instalada" : "Nenhuma parada no raio de 1.5 km."}
+                    {nearbyError
+                      ? (gtfsMissing ? "Base de transporte não instalada ou sem dados." : nearbyError)
+                      : nearbyState === "loading"
+                        ? "Obtendo localização e consultando a base local…"
+                        : nearbyState === "ready"
+                          ? "Nenhuma parada no raio de 1,5 km."
+                          : "Toque em Estações próximas para consultar os dados locais."}
                   </p>
                   {gtfsMissing && (
                     <button onClick={() => void syncGtfsDatabase()} disabled={gtfsSyncRunning}

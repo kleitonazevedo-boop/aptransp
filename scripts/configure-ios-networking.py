@@ -41,6 +41,15 @@ def main() -> None:
     with plist_path.open("rb") as stream:
         plist = plistlib.load(stream)
 
+    location_description = (
+        "O APTRANSP utiliza sua localização para encontrar linhas e paradas próximas "
+        "e definir a origem das suas rotas."
+    )
+    plist["NSLocationWhenInUseUsageDescription"] = location_description
+    # The plugin's iOS native dependency requires this usage string to be present.
+    # The app does not request Always permission or enable background location.
+    plist["NSLocationAlwaysAndWhenInUseUsageDescription"] = location_description
+
     # Never carry a global ATS relaxation into either environment.
     ats = plist.get("NSAppTransportSecurity", {})
     if not isinstance(ats, dict):
@@ -87,6 +96,10 @@ def main() -> None:
     with plist_path.open("rb") as stream:
         verified = plistlib.load(stream)
     verified_ats = verified.get("NSAppTransportSecurity", {})
+    if verified.get("NSLocationWhenInUseUsageDescription") != location_description:
+        raise SystemExit("The iOS location usage description was not configured.")
+    if verified.get("NSLocationAlwaysAndWhenInUseUsageDescription") != location_description:
+        raise SystemExit("The iOS geolocation plugin usage description was not configured.")
     if environment == "production":
         if "NSExceptionDomains" in verified_ats or any(
             verified_ats.get(key) for key in (

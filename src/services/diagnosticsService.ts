@@ -4,6 +4,7 @@ import { connectivityService } from "./connectivityService";
 import { getDb } from "@/database/database";
 import { gtfsRepository } from "@/repositories/gtfsRepository";
 import { getApiBaseUrl } from "@/config/api";
+import { checkLocationPermission } from "@/services/locationService";
 
 export type DiagnosticStatus = "ok" | "fail" | "unknown";
 
@@ -57,23 +58,33 @@ async function checkGoogleMaps(): Promise<DiagnosticResult> {
 }
 
 async function checkGps(): Promise<DiagnosticResult> {
-  if (!("geolocation" in navigator)) return { key: "gps", label: "GPS", status: "fail", detail: "API ausente" };
-  return new Promise((resolve) => {
-    navigator.geolocation.getCurrentPosition(
-      (p) => resolve({ key: "gps", label: "GPS", status: "ok", detail: `acc ${Math.round(p.coords.accuracy)} m` }),
-      (err) => resolve({ key: "gps", label: "GPS", status: "fail", detail: err.message }),
-      { timeout: 8000 },
-    );
-  });
+  try {
+    const permission = await checkLocationPermission();
+    return {
+      key: "gps", label: "GPS",
+      status: permission.granted ? "ok" : permission.blocked ? "fail" : "unknown",
+      detail: permission.granted
+        ? "Permissão concedida; a posição será solicitada quando um recurso GPS for usado."
+        : permission.blocked
+          ? "Permissão bloqueada; habilite nas configurações do aplicativo."
+          : "Aguardando solicitação em uma ação que use localização.",
+    };
+  } catch {
+    return { key: "gps", label: "GPS", status: "unknown", detail: "Não foi possível consultar a permissão." };
+  }
 }
 
 async function checkAndroidPerms(): Promise<DiagnosticResult> {
   try {
-    const perm = await (navigator as Navigator & { permissions?: { query: (q: { name: PermissionName }) => Promise<PermissionStatus> } })
-      .permissions?.query({ name: "geolocation" as PermissionName });
-    if (!perm) return { key: "perms", label: "Permissões", status: "unknown" };
-    return { key: "perms", label: "Permissões", status: perm.state === "granted" ? "ok" : "fail", detail: perm.state };
-  } catch (e) { return { key: "perms", label: "Permissões", status: "unknown", detail: String(e) }; }
+    const permission = await checkLocationPermission();
+    return {
+      key: "perms", label: "Permissões",
+      status: permission.granted ? "ok" : permission.blocked ? "fail" : "unknown",
+      detail: permission.granted ? "Localização durante o uso autorizada" : permission.blocked ? "Ative nas configurações do aplicativo" : permission.state,
+    };
+  } catch {
+    return { key: "perms", label: "Permissões", status: "unknown", detail: "Estado indisponível" };
+  }
 }
 
 export async function checkHomelab(): Promise<DiagnosticResult> {

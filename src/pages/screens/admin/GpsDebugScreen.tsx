@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ArrowLeft, Crosshair, Loader2 } from "lucide-react";
 import { Logo } from "@/components/Logo";
 import { logger } from "@/services/loggerService";
+import { checkLocationPermission, getCurrentLocation } from "@/services/locationService";
 
 interface Props { onBack: () => void }
 
@@ -17,33 +18,33 @@ const GpsDebugScreen = ({ onBack }: Props) => {
 
   const checkPerm = async () => {
     try {
-      const p = await (navigator as Navigator & { permissions?: { query: (q: { name: PermissionName }) => Promise<PermissionStatus> } })
-        .permissions?.query({ name: "geolocation" as PermissionName });
-      setPermState(p?.state ?? "indisponível");
-    } catch (e) { setPermState(String(e)); }
+      const permission = await checkLocationPermission();
+      setPermState(permission.state === "denied" ? "bloqueada" : permission.state);
+    } catch {
+      setPermState("indisponível");
+    }
   };
 
   const getLoc = async () => {
-    setError(null); setLoading(true);
-    if (!("geolocation" in navigator)) {
-      setError("navigator.geolocation indisponível");
-      void logger.error("gps", "navigator.geolocation indisponível");
-      setLoading(false); return;
+    setError(null);
+    setLoading(true);
+    try {
+      const position = await getCurrentLocation(15000);
+      const r = {
+        lat: position.latitude,
+        lng: position.longitude,
+        accuracy: position.accuracy ?? 0,
+        timestamp: Date.now(),
+      };
+      setReading(r);
+      void logger.info("gps", "Localização obtida (precisão em metros)", { accuracy: r.accuracy });
+    } catch (cause) {
+      const message = cause instanceof Error ? cause.message : "Não foi possível obter localização.";
+      setError(message);
+      void logger.error("gps", "Falha ao obter localização");
+    } finally {
+      setLoading(false);
     }
-    navigator.geolocation.getCurrentPosition(
-      (pos) => {
-        const r = { lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy, timestamp: pos.timestamp };
-        setReading(r);
-        void logger.info("gps", "Localização obtida", r);
-        setLoading(false);
-      },
-      (err) => {
-        setError(`${err.code} · ${err.message}`);
-        void logger.error("gps", "Erro getCurrentPosition", { code: err.code, message: err.message });
-        setLoading(false);
-      },
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
-    );
   };
 
   return (

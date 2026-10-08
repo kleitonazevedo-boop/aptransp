@@ -58,7 +58,10 @@ jobs:
         run: npm ci
 
       - name: Run tests
-        run: npm test
+        run: npm run test -- --run
+
+      - name: TypeScript validation
+        run: npx tsc --noEmit
 
       - name: Build web application
         env:
@@ -96,6 +99,9 @@ jobs:
             echo "::error::APTRANSP_API_URL was not embedded in the Vite bundle."
             exit 1
           fi
+
+      - name: Validate Capacitor Android plugin registration
+        run: npx cap sync android
 
       - name: Create iOS project if missing
         run: |

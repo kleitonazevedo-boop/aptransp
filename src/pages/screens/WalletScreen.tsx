@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { Logo } from "@/components/Logo";
+import { getCurrentLocation } from "@/services/locationService";
 import { SideMenu } from "@/components/SideMenu";
 import RouteScreen from "./RouteScreen";
 import {
@@ -64,12 +65,13 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
     }, 1800);
   };
 
-  const handleGps = () => {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setOrigin(`Lat ${pos.coords.latitude.toFixed(4)}, Lng ${pos.coords.longitude.toFixed(4)}`),
-      () => setOrigin("Localização indisponível"),
-    );
+  const handleGps = async () => {
+    try {
+      const position = await getCurrentLocation();
+      setOrigin(`Lat ${position.latitude.toFixed(4)}, Lng ${position.longitude.toFixed(4)}`);
+    } catch (error) {
+      setOrigin(error instanceof Error ? error.message : "Localização indisponível");
+    }
   };
 
   const swap = () => {
@@ -168,7 +170,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
 
     if (id === "route") {
       return (
-        <div className="w-full h-full overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="w-full h-full min-h-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
           <RouteScreen embedded />
         </div>
       );
