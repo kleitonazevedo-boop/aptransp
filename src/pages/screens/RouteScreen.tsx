@@ -71,6 +71,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   const mapInstance = useRef<google.maps.Map | null>(null);
   const polylineRef = useRef<google.maps.Polyline | null>(null);
   const markersRef = useRef<google.maps.Marker[]>([]);
+  const nearbyLocationRef = useRef<{ latitude: number; longitude: number; accuracy?: number } | null>(null);
 
   useEffect(() => connectivityService.subscribe(setIsOnline), []);
 
@@ -299,8 +300,19 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
       const dataset = await gtfsRepository.validateDataset();
       setGtfsMissing(!dataset.valid);
       if (dataset.valid && (contentMode === "nearby-lines" || contentMode === "nearby-stations")) {
-        setNearbyState("idle");
-        setNearbyError("Dados instalados. Toque novamente em Linhas próximas ou Estações próximas para consultar.");
+        const location = nearbyLocationRef.current;
+        if (location) {
+          const search = contentMode === "nearby-lines" ? "lines" : "stops";
+          const nearby = await queryNearbyTransit(location, search);
+          setNearbyError(null);
+          setNearbyState("ready");
+          setNearbyLines(nearby.lines);
+          setNearbyStops(nearby.stops);
+          void drawNearbyMarkers(nearby.stops, location);
+        } else {
+          setNearbyState("idle");
+          setNearbyError("Dados instalados. Toque novamente em Linhas próximas ou Estações próximas para consultar.");
+        }
       }
     } catch (error) {
       setGtfsSyncError(error instanceof Error ? error.message : "Não foi possível instalar os dados offline.");
@@ -328,6 +340,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
     setContentMode("nearby-lines");
     try {
       const loc = await getCurrentLocation();
+      nearbyLocationRef.current = loc;
       console.info("[GTFS-NEARBY] latitude: " + loc.latitude);
       console.info("[GTFS-NEARBY] longitude: " + loc.longitude);
       console.info("[GTFS-NEARBY] radius: 1000 m");
@@ -358,6 +371,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
     setContentMode("nearby-stations");
     try {
       const loc = await getCurrentLocation();
+      nearbyLocationRef.current = loc;
       console.info("[GTFS-NEARBY] latitude: " + loc.latitude);
       console.info("[GTFS-NEARBY] longitude: " + loc.longitude);
       console.info("[GTFS-NEARBY] radius: 1500 m");
