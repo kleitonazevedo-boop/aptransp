@@ -3,17 +3,13 @@ import multer from "multer";
 import { parse } from "csv-parse/sync";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream, createWriteStream } from "node:fs";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-import { mkdir, readdir, stat, unlink } from "node:fs/promises";
+import { mkdir, stat, unlink } from "node:fs/promises";
 import path from "node:path";
 import archiver from "archiver";
 import { pool } from "../db.js";
 import { createSqliteSnapshot } from "../gtfsSqliteSnapshot.js";
 
 export const gtfsRouter = Router();
-
-const execFileAsync = promisify(execFile);
 
 const GTFS_TABLES = [
   "gtfs_agency","gtfs_calendar","gtfs_fare_attributes","gtfs_fare_rules",
@@ -43,43 +39,6 @@ function snapshotPath(version: string) {
 }
 function sqliteSnapshotPath(version: string) {
   return path.join(SNAPSHOT_DIR, `aptransp_gtfs_${version}.db`);
-}
-
-async function newestSqliteSnapshot(): Promise<{ version: string; path: string } | null> {
-  let names: string[];
-  try { names = await readdir(SNAPSHOT_DIR); } catch { return null; }
-  const candidates = names.flatMap((name) => {
-    const match = /^(?:gtfs-(\d{8}-\d{6})\.sqlite|aptransp_gtfs_(\d{8}-\d{6})\.db)$/.exec(name);
-    const version = match?.[1] ?? match?.[2];
-    return version ? [{ version, path: path.join(SNAPSHOT_DIR, name) }] : [];
-  }).sort((a, b) => b.version.localeCompare(a.version));
-  return candidates[0] ?? null;
-}
-
-async function countSqliteGtfsRecords(filePath: string): Promise<number> {
-  const query = async (sql: string) => (await execFileAsync("sqlite3", [filePath, sql], { encoding: "utf8", maxBuffer: 1024 * 1024 })).stdout.trim();
-  const hasMetadata = await query("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='gtfs_snapshot_metadata';");
-  if (Number(hasMetadata) > 0) {
-    const total = Number(await query("SELECT total_records FROM gtfs_snapshot_metadata LIMIT 1;"));
-    if (Number.isSafeInteger(total) && total > 0) return total;
-  }
-  const tables = new Set((await query("SELECT name FROM sqlite_master WHERE type='table';")).split(/\r?\n/));
-  const aliases = ["gtfs_stops", "stops", "gtfs_routes", "routes", "gtfs_trips", "trips", "gtfs_stop_times", "stop_times", "gtfs_shapes", "shapes"];
-  const available = aliases.filter((name) => tables.has(name));
-  if (!available.length) return 0;
-  const sums = await query(available.map((name) => "SELECT COUNT(*) FROM \"" + name + "\"").join(" UNION ALL "));
-  return sums.split(/\r?\n/).map(Number).filter(Number.isFinite).reduce((sum, count) => sum + count, 0);
-}
-
-async function publishedSqliteSnapshotPath(version: string) {
-  const candidates = [
-    sqliteSnapshotPath(version),
-    path.join(SNAPSHOT_DIR, `gtfs-${version}.sqlite`),
-  ];
-  for (const candidate of candidates) {
-    try { await stat(candidate); return candidate; } catch { /* try the legacy homelab filename */ }
-  }
-  throw new Error("Snapshot SQLite GTFS não encontrado");
 }
 
 async function createSnapshot(version: string, files: Express.Multer.File[]) {
@@ -262,7 +221,7 @@ gtfsRouter.post("/publish", async (req,res)=>{
     if(!candidate.rows[0]) { await client.query("ROLLBACK"); return res.status(404).json({status:"error",message:"Nenhuma versão GTFS pronta para publicação"}); }
     const row=candidate.rows[0];
     try {
-      await Promise.all([stat(snapshotPath(row.version)), publishedSqliteSnapshotPath(row.version)]);
+      await Promise.all([stat(snapshotPath(row.version)), stat(sqliteSnapshotPath(row.version))]);
     } catch {
       await client.query("ROLLBACK");
       return res.status(409).json({status:"error",message:"Snapshots ZIP/SQLite da versão não encontrados. Reimporte o pacote GTFS com a API atual antes de publicar.",version:row.version});
@@ -290,7 +249,7 @@ gtfsRouter.get("/sync/manifest", async (req,res)=>{
     let info;
     try { info=await stat(filePath); } catch { return res.status(503).json({status:"error",message:"Snapshot da versão publicada indisponível",version:row.version}); }
     const checksum=await sha256File(filePath);
-    const sqlitePath=await publishedSqliteSnapshotPath(row.version);
+    const sqlitePath=sqliteSnapshotPath(row.version);
     let sqliteInfo;
     try { sqliteInfo=await stat(sqlitePath); } catch { return res.status(503).json({status:"error",message:"Snapshot SQLite da versão publicada indisponível",version:row.version}); }
     const sqliteChecksum=await sha256File(sqlitePath);
@@ -309,57 +268,19 @@ gtfsRouter.get("/sync/manifest", async (req,res)=>{
   }
 });
 
-
-gtfsRouter.get("/sync/latest", async (_req, res) => {
+gtfsRouter.get("/sync/sqlite/aptransp_gtfs_:version.db", async (req,res)=>{
   try {
-    const result = await pool.query(
-      `SELECT version, total_records, published_at FROM gtfs_versions
-       WHERE status='published' ORDER BY published_at DESC NULLS LAST, id DESC LIMIT 1`,
-    );
-    const published = result.rows[0];
-    const fallback = await newestSqliteSnapshot();
-    const usePublished = Boolean(published?.version && (!fallback || published.version >= fallback.version));
-    const version = usePublished ? published?.version : fallback?.version;
-    if (!version) return res.status(404).json({ status: "error", message: "Nenhuma versão GTFS publicada" });
-    let filePath: string;
-    try { filePath = await publishedSqliteSnapshotPath(version); }
-    catch { return res.status(503).json({ status: "error", message: "Snapshot SQLite publicado indisponível" }); }
-    const info = await stat(filePath);
-    const sha256 = await sha256File(filePath);
-    const totalRecords = Number(usePublished ? published?.total_records : await countSqliteGtfsRecords(filePath));
-    if (!Number.isSafeInteger(totalRecords) || totalRecords <= 0) {
-      return res.status(503).json({ status: "error", message: "Snapshot SQLite sem registros GTFS essenciais" });
-    }
-    const filename = `aptransp_gtfs_${version}.db`;
-    return res.json({
-      version,
-      filename,
-      size: info.size,
-      sha256,
-      downloadUrl: `/api/v1/gtfs/sync/sqlite/${filename}`,
-      publishedAt: usePublished ? published?.published_at ?? null : null,
-      totalRecords,
-    });
-  } catch (error) {
-    console.error("[gtfs/sync/latest]", error);
-    return res.status(500).json({ status: "error", message: "Falha ao consultar a versão GTFS publicada" });
-  }
-});
-
-gtfsRouter.get("/sync/sqlite/aptransp_gtfs_:version.db", async (req, res) => {
-  try {
-    const version = req.params.version;
-    if (!/^\d{8}-\d{6}$/.test(version)) return res.status(400).json({ status: "error", message: "Versão GTFS inválida" });
-    let filePath: string;
-    try { filePath = await publishedSqliteSnapshotPath(version); }
-    catch { return res.status(404).json({ status: "error", message: "Snapshot SQLite GTFS não encontrado" }); }
-    res.setHeader("Content-Type", "application/vnd.sqlite3");
-    res.setHeader("Content-Disposition", `attachment; filename="aptransp_gtfs_${version}.db"`);
-    res.setHeader("Cache-Control", "public, max-age=31536000, immutable");
+    const result=await pool.query(`SELECT version FROM gtfs_versions WHERE version=$1 AND status='published' LIMIT 1`,[req.params.version]);
+    if(!result.rows[0]) return res.status(404).json({status:"error",message:"Versão GTFS publicada não encontrada"});
+    const filePath=sqliteSnapshotPath(result.rows[0].version);
+    try { await stat(filePath); } catch { return res.status(404).json({status:"error",message:"Snapshot SQLite GTFS não encontrado"}); }
+    res.setHeader("Content-Type","application/vnd.sqlite3");
+    res.setHeader("Content-Disposition",`attachment; filename="aptransp_gtfs_${result.rows[0].version}.db"`);
+    res.setHeader("Cache-Control","public, max-age=31536000, immutable");
     return createReadStream(filePath).pipe(res);
-  } catch (error) {
-    console.error("[gtfs/sync/sqlite]", error);
-    return res.status(500).json({ status: "error", message: "Falha ao baixar snapshot SQLite GTFS" });
+  } catch(error) {
+    console.error("[gtfs/sync/sqlite]",error);
+    return res.status(500).json({status:"error",message:"Failed to download SQLite GTFS snapshot"});
   }
 });
 

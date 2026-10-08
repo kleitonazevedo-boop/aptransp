@@ -105,19 +105,18 @@ function haversineMeters(aLat: number, aLon: number, bLat: number, bLon: number)
   return 2 * R * Math.asin(Math.sqrt(h));
 }
 
+const CHUNK = 400;
+
 async function getGtfsReadDb(): Promise<LocalDb> {
   const main = await getDb();
-  const metadata = await main.one<GtfsSyncMetadata>("SELECT * FROM gtfs_sync_metadata WHERE id = 1;");
-  if (metadata?.version) {
-    try { return await getGtfsSnapshotDb(metadata.version); }
-    catch {
-      console.warn("[GTFS-DB] Snapshot ativo indisponível; consultando GTFS legado local.");
-    }
+  const meta = await main.one<GtfsSyncMetadata>("SELECT * FROM gtfs_sync_metadata WHERE id = 1;");
+  if (meta?.status === "ready" && meta.version) {
+    try { return await getGtfsSnapshotDb(meta.version); }
+    catch (error) { console.warn("[gtfs] snapshot indisponível; usando GTFS legado do banco principal", error); }
   }
   return main;
 }
 
-const CHUNK = 400;
 
 export const gtfsRepository = {
   async getSyncMetadata(): Promise<GtfsSyncMetadata | null> {
@@ -162,7 +161,6 @@ export const gtfsRepository = {
         WHERE id = 1;`,
       [meta.version, meta.publishedAt, meta.totalRecords, meta.sha256, meta.sizeBytes],
     );
-    verifiedSnapshotVersions.add(meta.version);
   },
 
   async listImports(): Promise<GtfsImportRow[]> {
@@ -177,73 +175,18 @@ export const gtfsRepository = {
 
   async counts(): Promise<Record<string, number>> {
     const db = await getGtfsReadDb();
-    const schema = await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table';");
-    const available = new Set(schema.map((row) => row.name));
-    const dataset = await this.validateDataset();
     const result: Record<string, number> = {};
     for (const { table } of Object.values(GTFS_FILE_MAP)) {
-      const key = table.replace(/^gtfs_/, "");
-      const candidates = [dataset.tables[key], table, key].filter((name): name is string => Boolean(name));
-      const selected = candidates.find((name) => available.has(name));
-      if (!selected) {
-        result[table] = 0;
-        continue;
-      }
-      const row = await db.one<{ n: number }>('SELECT COUNT(*) AS n FROM "' + selected + '";');
+      const row = await db.one<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table};`);
       result[table] = Number(row?.n ?? 0);
     }
     return result;
   },
 
-  async validateDataset(useLegacyDatabase = false): Promise<{ valid: boolean; counts: Record<string, number>; tables: Record<string, string | null> }> {
-    const db = useLegacyDatabase ? await getDb() : await getGtfsReadDb();
-    const schema = await db.all<{ name: string }>("SELECT name FROM sqlite_master WHERE type = 'table';");
-    const available = new Set(schema.map((row) => row.name));
-    const specs = [
-      { key: "stops", candidates: ["gtfs_stops", "stops"] },
-      { key: "routes", candidates: ["gtfs_routes", "routes"] },
-      { key: "trips", candidates: ["gtfs_trips", "trips"] },
-      { key: "stop_times", candidates: ["gtfs_stop_times", "stop_times"] },
-      { key: "shapes", candidates: ["gtfs_shapes", "shapes"] },
-    ];
-    const counts: Record<string, number> = {};
-    const tables: Record<string, string | null> = {};
-
-    for (const spec of specs) {
-      const found = spec.candidates.filter((name) => available.has(name));
-      if (!found.length) {
-        tables[spec.key] = null;
-        counts[spec.key] = 0;
-        console.warn("[GTFS-DB] " + spec.key + ": table missing");
-        continue;
-      }
-      let selected = found[0];
-      let selectedCount = -1;
-      for (const table of found) {
-        const row = await db.one<{ n: number }>('SELECT COUNT(*) AS n FROM "' + table + '";');
-        const count = Number(row?.n ?? 0);
-        if (count > selectedCount) {
-          selected = table;
-          selectedCount = count;
-        }
-      }
-      tables[spec.key] = selected;
-      counts[spec.key] = Math.max(0, selectedCount);
-      console.info("[GTFS-DB] " + spec.key + ": " + counts[spec.key] + " (table " + selected + ")");
-    }
-
-    const required = ["stops", "routes", "trips", "stop_times"];
-    const missing = required.filter((key) => !tables[key] || counts[key] === 0);
-    const valid = missing.length === 0;
-    if (!valid) {
-      console.warn("[GTFS-DB] Base GTFS local não instalada ou sem dados. Ausentes/vazias: " + missing.join(", "));
-    }
-    return { valid, counts, tables };
-  },
-
   async hasData(): Promise<boolean> {
-    const status = await this.validateDataset();
-    return status.valid;
+    const db = await getGtfsReadDb();
+    const row = await db.one<{ n: number }>("SELECT COUNT(*) AS n FROM gtfs_stops;");
+    return Number(row?.n ?? 0) > 0;
   },
 
   /**
@@ -326,211 +269,122 @@ export const gtfsRepository = {
       if (!files[name]) throw new Error(`Pacote GTFS incompleto: ${name} ausente`);
     }
 
-    const statements: Array<{ sql: string; params?: (string | number | null)[] }> = [];
-    const counts: Record<string, number> = {};
-
-    for (const name of GTFS_FILES) {
-      const text = files[name];
-      if (text == null) continue;
-      const spec = GTFS_FILE_MAP[name];
-      const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
-      if (lines.length < 2) throw new Error(`Arquivo GTFS vazio: ${name}`);
-
-      const header = parseCsvLine(lines[0]).map((h) => h.replace(/^\uFEFF/, ""));
-      const idx = spec.columns.map((column) => header.indexOf(column));
-      const missing = spec.columns.filter((_, i) => idx[i] < 0);
-      if (missing.length) throw new Error(`${name}: colunas ausentes: ${missing.join(", ")}`);
-
-      statements.push({ sql: `DELETE FROM ${spec.table};` });
-      const placeholders = spec.columns.map(() => "?").join(", ");
-      const sql = `INSERT OR REPLACE INTO ${spec.table} (${spec.columns.join(", ")}) VALUES (${placeholders});`;
-
-      const total = lines.length - 1;
-      for (let i = 1; i < lines.length; i++) {
-        const cells = parseCsvLine(lines[i]);
-        statements.push({ sql, params: idx.map((j) => cells[j] ?? null) });
-        if (i % 5000 === 0) onProgress?.(name, i, total);
-      }
-      counts[spec.table] = total;
-      onProgress?.(name, total, total);
-    }
-
-    const stops = counts.gtfs_stops ?? 0;
-    const routes = counts.gtfs_routes ?? 0;
-    const trips = counts.gtfs_trips ?? 0;
-    const stopTimes = counts.gtfs_stop_times ?? 0;
-    if (!stops || !routes || !trips || !stopTimes) {
-      throw new Error("Pacote GTFS inválido: tabelas essenciais sem registros");
-    }
-
     const db = await getDb();
-    await db.transaction(statements);
-    return counts;
+    const counts: Record<string, number> = {};
+    await db.beginTransaction();
+
+    try {
+      for (const name of GTFS_FILES) {
+        const text = files[name];
+        if (text == null) continue;
+        const spec = GTFS_FILE_MAP[name];
+        const lines = text.split(/\r?\n/).filter((line) => line.trim().length > 0);
+        if (lines.length < 2) throw new Error(`Arquivo GTFS vazio: ${name}`);
+
+        const header = parseCsvLine(lines[0]).map((h) => h.replace(/^\uFEFF/, ""));
+        const idx = spec.columns.map((column) => header.indexOf(column));
+        const missing = spec.columns.filter((_, i) => idx[i] < 0);
+        if (missing.length) throw new Error(`${name}: colunas ausentes: ${missing.join(", ")}`);
+
+        await db.run(`DELETE FROM ${spec.table};`);
+        const placeholders = spec.columns.map(() => "?").join(", ");
+        const sql = `INSERT OR REPLACE INTO ${spec.table} (${spec.columns.join(", ")}) VALUES (${placeholders});`;
+        const total = lines.length - 1;
+
+        for (let offset = 1; offset < lines.length; offset += CHUNK) {
+          const end = Math.min(offset + CHUNK, lines.length);
+          const batch: Array<{ sql: string; params?: (string | number | null)[] }> = [];
+          for (let i = offset; i < end; i++) {
+            const cells = parseCsvLine(lines[i]);
+            batch.push({ sql, params: idx.map((j) => cells[j] ?? null) });
+          }
+          await db.transaction(batch);
+          onProgress?.(name, end - 1, total);
+        }
+        counts[spec.table] = total;
+      }
+
+      const stops = counts.gtfs_stops ?? 0;
+      const routes = counts.gtfs_routes ?? 0;
+      const trips = counts.gtfs_trips ?? 0;
+      const stopTimes = counts.gtfs_stop_times ?? 0;
+      if (!stops || !routes || !trips || !stopTimes) {
+        throw new Error("Pacote GTFS inválido: tabelas essenciais sem registros");
+      }
+
+      await db.commitTransaction();
+      return counts;
+    } catch (error) {
+      await db.rollbackTransaction();
+      throw error;
+    }
   },
 
-  /** Paradas próximas — diagnóstico offline com bounding box + haversine. */
+  /** Paradas próximas — consulta offline com bounding box + haversine. */
   async nearbyStops(lat: number, lon: number, radiusMeters = 1000, limit = 30): Promise<NearbyStop[]> {
-    if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) {
-      throw new Error("Localização inválida: coordenadas GPS ausentes ou fora do intervalo.");
-    }
-    if (!Number.isFinite(radiusMeters) || radiusMeters <= 0) {
-      throw new Error("Raio de busca inválido.");
-    }
-
     const db = await getGtfsReadDb();
-    const status = await this.validateDataset();
-    const table = status.tables.stops;
-    if (!table || status.counts.stops === 0) throw new Error("Base GTFS local não instalada ou sem dados.");
-
     const dLat = radiusMeters / 111_320;
-    const cosLat = Math.cos((lat * Math.PI) / 180);
-    const dLon = radiusMeters / (111_320 * Math.max(0.1, Math.abs(cosLat)));
-    const minLat = Math.max(-90, lat - dLat);
-    const maxLat = Math.min(90, lat + dLat);
-    const minLon = Math.max(-180, lon - dLon);
-    const maxLon = Math.min(180, lon + dLon);
-    console.info("[GTFS-NEARBY] latitude: " + lat);
-    console.info("[GTFS-NEARBY] longitude: " + lon);
-    console.info("[GTFS-NEARBY] radius: " + radiusMeters + " m");
-    console.info("[GTFS-NEARBY] total stops: " + status.counts.stops);
-
-    const rows = await db.all<{ stop_id: string; stop_name: string; stop_lat: number | string; stop_lon: number | string }>(
-      'SELECT stop_id, stop_name, stop_lat, stop_lon FROM "' + table + '" ' +
-      "WHERE CAST(stop_lat AS REAL) BETWEEN ? AND ? AND CAST(stop_lon AS REAL) BETWEEN ? AND ?;",
-      [minLat, maxLat, minLon, maxLon],
+    const dLon = radiusMeters / (111_320 * Math.max(0.1, Math.cos((lat * Math.PI) / 180)));
+    const rows = await db.all<{ stop_id: string; stop_name: string; stop_lat: number; stop_lon: number }>(
+      `SELECT stop_id, stop_name, stop_lat, stop_lon FROM gtfs_stops
+       WHERE stop_lat BETWEEN ? AND ? AND stop_lon BETWEEN ? AND ? LIMIT 800;`,
+      [lat - dLat, lat + dLat, lon - dLon, lon + dLon],
     );
-    console.info("[GTFS-NEARBY] stops in bbox: " + rows.length);
-
-    const validRows = rows.filter((row) => {
-      const stopLat = Number(row.stop_lat);
-      const stopLon = Number(row.stop_lon);
-      return Number.isFinite(stopLat) && Number.isFinite(stopLon) &&
-        stopLat >= -90 && stopLat <= 90 && stopLon >= -180 && stopLon <= 180;
-    });
-    console.info("[GTFS-NEARBY] valid numeric-coordinate stops in bbox: " + validRows.length);
-    if (validRows.length) {
-      const sample = validRows.slice(0, 3);
-      console.info("[GTFS-NEARBY] coordinate sample (lat,lon): " +
-        sample.map((row) => Number(row.stop_lat) + "," + Number(row.stop_lon)).join(" | "));
-    }
-
-    const withinRadius = validRows
-      .map((row) => ({
-        ...row,
-        stop_lat: Number(row.stop_lat),
-        stop_lon: Number(row.stop_lon),
-        distanceMeters: haversineMeters(lat, lon, Number(row.stop_lat), Number(row.stop_lon)),
-      }))
-      .filter((row) => row.distanceMeters <= radiusMeters)
-      .sort((a, b) => a.distanceMeters - b.distanceMeters);
-    console.info("[GTFS-NEARBY] stops in radius: " + withinRadius.length);
-    console.info("[GTFS-NEARBY] nearest stop distance: " +
-      (withinRadius.length ? Math.round(withinRadius[0].distanceMeters) + " m" : "none"));
-
-    return withinRadius.slice(0, limit);
+    return rows
+      .map((r) => ({ ...r, distanceMeters: haversineMeters(lat, lon, Number(r.stop_lat), Number(r.stop_lon)) }))
+      .filter((r) => r.distanceMeters <= radiusMeters)
+      .sort((a, b) => a.distanceMeters - b.distanceMeters)
+      .slice(0, limit);
   },
 
   /** Linhas que atendem as paradas próximas — offline via stop_times/trips/routes. */
-  async nearbyLines(
-    lat: number,
-    lon: number,
-    radiusMeters = 1000,
-    limit = 40,
-    nearbyStops?: NearbyStop[],
-  ): Promise<NearbyGtfsLine[]> {
-    const status = await this.validateDataset();
-    if (!status.valid) throw new Error("Base GTFS local não instalada ou sem dados.");
-    const stops = nearbyStops ?? await this.nearbyStops(lat, lon, radiusMeters, 25);
-    if (!stops.length) {
-      console.info("[GTFS-NEARBY] stop_times matched: 0 (no nearby stops)");
-      console.info("[GTFS-NEARBY] distinct trips referenced: 0");
-      console.info("[GTFS-NEARBY] trips matched: 0");
-      console.info("[GTFS-NEARBY] distinct routes referenced: 0");
-      console.info("[GTFS-NEARBY] routes found: 0");
-      return [];
-    }
-
+  async nearbyLines(lat: number, lon: number, radiusMeters = 1000, limit = 40): Promise<NearbyGtfsLine[]> {
+    const stops: NearbyStop[] = await this.nearbyStops(lat, lon, radiusMeters, 25);
+    if (!stops.length) return [];
     const db = await getGtfsReadDb();
-    const stopTable = status.tables.stop_times!;
-    const tripTable = status.tables.trips!;
-    const routeTable = status.tables.routes!;
-    const ids = stops.map((stop) => stop.stop_id);
+    const ids = stops.map((s) => s.stop_id);
     const inList = ids.map(() => "?").join(", ");
-    const stopTimesCount = await db.one<{ n: number }>(
-      'SELECT COUNT(*) AS n FROM "' + stopTable + '" WHERE stop_id IN (' + inList + ');',
-      ids,
-    );
-    const tripsReferenced = await db.one<{ n: number }>(
-      'SELECT COUNT(DISTINCT trip_id) AS n FROM "' + stopTable + '" WHERE stop_id IN (' + inList + ');',
-      ids,
-    );
-    const tripsMatched = await db.one<{ n: number }>(
-      'SELECT COUNT(DISTINCT st.trip_id) AS n FROM "' + stopTable + '" st ' +
-      'JOIN "' + tripTable + '" t ON t.trip_id = st.trip_id WHERE st.stop_id IN (' + inList + ');',
-      ids,
-    );
-    const routesReferenced = await db.one<{ n: number }>(
-      'SELECT COUNT(DISTINCT t.route_id) AS n FROM "' + stopTable + '" st ' +
-      'JOIN "' + tripTable + '" t ON t.trip_id = st.trip_id WHERE st.stop_id IN (' + inList + ');',
-      ids,
-    );
-    const routesFound = await db.one<{ n: number }>(
-      'SELECT COUNT(DISTINCT r.route_id) AS n FROM "' + stopTable + '" st ' +
-      'JOIN "' + tripTable + '" t ON t.trip_id = st.trip_id ' +
-      'JOIN "' + routeTable + '" r ON r.route_id = t.route_id WHERE st.stop_id IN (' + inList + ');',
-      ids,
-    );
-    console.info("[GTFS-NEARBY] stop_times matched: " + Number(stopTimesCount?.n ?? 0));
-    console.info("[GTFS-NEARBY] distinct trips referenced: " + Number(tripsReferenced?.n ?? 0));
-    console.info("[GTFS-NEARBY] trips matched: " + Number(tripsMatched?.n ?? 0));
-    console.info("[GTFS-NEARBY] distinct routes referenced: " + Number(routesReferenced?.n ?? 0));
-    console.info("[GTFS-NEARBY] routes found: " + Number(routesFound?.n ?? 0));
-
     const rows = await db.all<{
       route_id: string; route_short_name: string; route_long_name: string; route_type: string; stop_id: string;
     }>(
-      'SELECT DISTINCT r.route_id, r.route_short_name, r.route_long_name, r.route_type, st.stop_id ' +
-      'FROM "' + stopTable + '" st JOIN "' + tripTable + '" t ON t.trip_id = st.trip_id ' +
-      'JOIN "' + routeTable + '" r ON r.route_id = t.route_id ' +
-      'WHERE st.stop_id IN (' + inList + ') LIMIT 400;',
+      `SELECT DISTINCT r.route_id, r.route_short_name, r.route_long_name, r.route_type, st.stop_id
+         FROM gtfs_stop_times st
+         JOIN gtfs_trips t ON t.trip_id = st.trip_id
+         JOIN gtfs_routes r ON r.route_id = t.route_id
+        WHERE st.stop_id IN (${inList})
+        LIMIT 400;`,
       ids,
     );
-    const byStop = new Map(stops.map((stop) => [stop.stop_id, stop]));
+    const byStop = new Map(stops.map((s) => [s.stop_id, s]));
     const seen = new Set<string>();
-    const result: NearbyGtfsLine[] = [];
-    for (const row of rows) {
-      if (seen.has(row.route_id)) continue;
-      const stop = byStop.get(row.stop_id);
-      if (!stop) continue;
-      seen.add(row.route_id);
-      result.push({
-        route_id: row.route_id,
-        route_short_name: row.route_short_name ?? "",
-        route_long_name: row.route_long_name ?? "",
-        route_type: String(row.route_type ?? ""),
-        stop_id: row.stop_id,
-        stop_name: stop.stop_name ?? "",
-        distanceMeters: stop.distanceMeters,
+    const out: NearbyGtfsLine[] = [];
+    for (const r of rows) {
+      if (seen.has(r.route_id)) continue;
+      seen.add(r.route_id);
+      const s = byStop.get(r.stop_id);
+      out.push({
+        route_id: r.route_id,
+        route_short_name: r.route_short_name ?? "",
+        route_long_name: r.route_long_name ?? "",
+        route_type: String(r.route_type ?? ""),
+        stop_id: r.stop_id,
+        stop_name: s?.stop_name ?? "",
+        distanceMeters: s?.distanceMeters ?? 0,
       });
     }
-    return result.sort((a, b) => a.distanceMeters - b.distanceMeters).slice(0, limit);
+    return out.sort((a, b) => a.distanceMeters - b.distanceMeters).slice(0, limit);
   },
 
   /** Próximos horários programados de uma parada (offline, via stop_times). */
   async nextDepartures(stopId: string, limit = 8) {
     const db = await getGtfsReadDb();
-    const tables = (await this.validateDataset()).tables;
-    const stopTimes = tables.stop_times;
-    const trips = tables.trips;
-    const routes = tables.routes;
-    if (!stopTimes || !trips || !routes) throw new Error("Base GTFS local não instalada ou sem dados.");
     const now = new Date();
     const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}:00`;
     return db.all<{ departure_time: string; route_short_name: string; trip_headsign: string }>(
       `SELECT st.departure_time, r.route_short_name, t.trip_headsign
-         FROM "${stopTimes}" st
-         JOIN "${trips}" t ON t.trip_id = st.trip_id
-         JOIN "${routes}" r ON r.route_id = t.route_id
+         FROM gtfs_stop_times st
+         JOIN gtfs_trips t ON t.trip_id = st.trip_id
+         JOIN gtfs_routes r ON r.route_id = t.route_id
         WHERE st.stop_id = ? AND st.departure_time >= ?
         ORDER BY st.departure_time ASC LIMIT ?;`,
       [stopId, hhmm, limit],

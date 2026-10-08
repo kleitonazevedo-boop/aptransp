@@ -1,5 +1,13 @@
 {
   "appId": "br.com.aptransp.app",
   "appName": "APTRANSP",
-  "webDir": "dist"
+  "webDir": "dist",
+  "server": {
+    "cleartext": true
+  },
+  "plugins": {
+    "CapacitorHttp": {
+      "enabled": true
+    }
+  }
 }

@@ -53,9 +53,7 @@ const GtfsImportScreen = ({ onBack }: Props) => {
       const result = await gtfsService.syncPublishedPackage((stage, detail) => {
         const labels: Record<string, string> = {
           downloading: "Baixando pacote GTFS",
-          validating: "Validando integridade",
-          extracting: "Descompactando pacote",
-          importing: "Atualizando banco local",
+          validating: "Validando banco SQLite",
           ready: "Sincronização concluída",
         };
         setSyncStage(`${labels[stage] ?? stage}${detail ? ` — ${detail}` : ""}`);
@@ -118,7 +116,7 @@ const GtfsImportScreen = ({ onBack }: Props) => {
             <CloudDownload className="w-5 h-5 text-brand-purple" />
             <div>
               <p className="text-sm font-bold text-blue-900">Sincronização GTFS</p>
-              <p className="text-[11px] text-blue-900/60">Servidor → banco SQLite deste dispositivo</p>
+              <p className="text-[11px] text-blue-900/60">Servidor → snapshot SQLite deste dispositivo</p>
             </div>
           </div>
 
