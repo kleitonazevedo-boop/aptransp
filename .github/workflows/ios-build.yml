@@ -67,8 +67,13 @@ jobs:
         env:
           VITE_APTRANSP_API_URL: ${{ env.APTRANSP_API_URL }}
           VITE_APTRANSP_ENV: ${{ env.APTRANSP_ENVIRONMENT }}
+          VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_BROWSER_KEY: ${{ secrets.VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_BROWSER_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "${VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_BROWSER_KEY:-}" ]; then
+            echo "::error::Required Google Maps browser key secret is missing."
+            exit 1
+          fi
           node --input-type=module <<'NODE'
           const environment = process.env.VITE_APTRANSP_ENV;
           const api = new URL(process.env.VITE_APTRANSP_API_URL);
@@ -97,6 +102,10 @@ jobs:
           npm run build
           if ! grep -R -F -- "$VITE_APTRANSP_API_URL" dist/assets >/dev/null; then
             echo "::error::APTRANSP_API_URL was not embedded in the Vite bundle."
+            exit 1
+          fi
+          if ! grep -R -F -q -- "$VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_BROWSER_KEY" dist/assets; then
+            echo "::error::Google Maps browser key was not embedded in the Vite bundle."
             exit 1
           fi
 

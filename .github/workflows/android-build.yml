@@ -1,0 +1,109 @@
+name: Build APTRANSP Android
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: android-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-android:
+    name: Build APTRANSP for Android
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APTRANSP_API_URL: ${{ vars.APTRANSP_API_URL || 'http://192.168.15.124:3000' }}
+      APTRANSP_ENVIRONMENT: ${{ vars.APTRANSP_ENVIRONMENT || 'local' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm run test -- --run
+
+      - name: TypeScript validation
+        run: npx tsc --noEmit
+
+      - name: Build web assets for Android
+        env:
+          VITE_APTRANSP_API_URL: ${{ env.APTRANSP_API_URL }}
+          VITE_APTRANSP_ENV: ${{ env.APTRANSP_ENVIRONMENT }}
+          VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_BROWSER_KEY: ${{ secrets.VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_BROWSER_KEY }}
+        run: |
+          set -euo pipefail
+          if [ -z "${VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_BROWSER_KEY:-}" ]; then
+            echo "::error::Required Google Maps browser key secret is missing."
+            exit 1
+          fi
+          node --input-type=module <<'NODE'
+          const environment = process.env.VITE_APTRANSP_ENV;
+          const api = new URL(process.env.VITE_APTRANSP_API_URL);
+          const host = api.hostname.toLowerCase();
+          const octets = host.split(".").map(Number);
+          const isPrivate = host === "localhost" || host.endsWith(".localhost") ||
+            (octets.length === 4 && octets.every(Number.isInteger) &&
+              (octets[0] === 10 || octets[0] === 127 ||
+                (octets[0] === 192 && octets[1] === 168) ||
+                (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+                (octets[0] === 169 && octets[1] === 254)));
+          if (!["local", "production"].includes(environment)) {
+            throw new Error("APTRANSP_ENVIRONMENT must be local or production.");
+          }
+          if (environment === "production" && (api.protocol !== "https:" || isPrivate)) {
+            throw new Error("Production builds require a public HTTPS APTRANSP_API_URL.");
+          }
+          if (environment === "local" && api.protocol === "http:" && !isPrivate) {
+            throw new Error("Local HTTP is allowed only for a private/local API host.");
+          }
+          if (!["http:", "https:"].includes(api.protocol)) {
+            throw new Error("APTRANSP_API_URL must use HTTP or HTTPS.");
+          }
+          console.log(`APTRANSP build environment: ${environment}`);
+          NODE
+          npm run build
+          if ! grep -R -F -q -- "$VITE_APTRANSP_API_URL" dist/assets; then
+            echo "::error::APTRANSP_API_URL was not embedded in the Vite bundle."
+            exit 1
+          fi
+          if ! grep -R -F -q -- "$VITE_LOVABLE_CONNECTOR_GOOGLE_MAPS_BROWSER_KEY" dist/assets; then
+            echo "::error::Google Maps browser key was not embedded in the Vite bundle."
+            exit 1
+          fi
+
+      - name: Sync Capacitor Android project
+        run: npx cap sync android
+
+      - name: Build Android debug APK
+        run: ./gradlew --no-daemon assembleDebug
+        working-directory: android
+
+      - name: Upload Android debug APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: APTRANSP-Android-debug
+          path: android/app/build/outputs/apk/debug/app-debug.apk
+          if-no-files-found: error
+          retention-days: 14
