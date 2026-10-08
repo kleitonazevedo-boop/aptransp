@@ -31,11 +31,11 @@ describe("API APTRANSP centralizada", () => {
   });
 
   it("checks health through the configured base URL", async () => {
-    vi.stubEnv("VITE_APTRANSP_API_URL", "http://api.test:3000");
+    vi.stubEnv("VITE_APTRANSP_API_URL", "http://192.168.15.124:3000");
     const fetchMock = vi.fn().mockResolvedValue({ status: 404 });
     vi.stubGlobal("fetch", fetchMock);
     expect(await checkHomelab()).toMatchObject({ status: "ok", detail: "Servidor acessível · HTTP 404" });
-    expect(fetchMock).toHaveBeenCalledWith("http://api.test:3000/health", expect.anything());
+    expect(fetchMock).toHaveBeenCalledWith("http://192.168.15.124:3000/health", expect.anything());
   });
 
   it("uses the same base URL for GTFS health and latest metadata", async () => {
@@ -51,18 +51,18 @@ describe("API APTRANSP centralizada", () => {
   });
 
   it("reports network errors without breaking offline diagnostics", async () => {
-    vi.stubEnv("VITE_APTRANSP_API_URL", "http://api.test");
+    vi.stubEnv("VITE_APTRANSP_API_URL", "http://192.168.15.124:3000");
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("Failed to fetch")));
     expect((await checkHomelab()).status).toBe("fail");
   });
 
   it("keeps the native Capacitor HTTP path", async () => {
-    vi.stubEnv("VITE_APTRANSP_API_URL", "http://api.test");
+    vi.stubEnv("VITE_APTRANSP_API_URL", "http://192.168.15.124:3000");
     vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
-    vi.mocked(CapacitorHttp.get).mockResolvedValue({ status: 200, data: {}, headers: {}, url: "http://api.test/health" });
+    vi.mocked(CapacitorHttp.get).mockResolvedValue({ status: 200, data: {}, headers: {}, url: "http://192.168.15.124:3000/health" });
     expect((await checkHomelab()).status).toBe("ok");
     expect(CapacitorHttp.get).toHaveBeenCalledWith({
-      url: "http://api.test/health", connectTimeout: 8000, readTimeout: 8000,
+      url: "http://192.168.15.124:3000/health", connectTimeout: 8000, readTimeout: 8000,
     });
   });
 });
