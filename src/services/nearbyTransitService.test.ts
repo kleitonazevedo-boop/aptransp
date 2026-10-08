@@ -25,7 +25,7 @@ describe("local GTFS nearby query", () => {
     expect(result.lines).toHaveLength(1);
     expect(gtfsRepository.validateDataset).toHaveBeenCalledOnce();
     expect(gtfsRepository.nearbyStops).toHaveBeenCalledWith(-23.5, -46.6, 1000);
-    expect(gtfsRepository.nearbyLines).toHaveBeenCalledOnce();
+    expect(gtfsRepository.nearbyLines).toHaveBeenCalledWith(-23.5, -46.6, 1000, 40, [{ stop_id: "s1" }]);
   });
 
   it("does not convert invalid coordinates into an empty nearby result", async () => {
@@ -35,8 +35,16 @@ describe("local GTFS nearby query", () => {
     expect(gtfsRepository.nearbyLines).not.toHaveBeenCalled();
   });
 
+  it("keeps a valid dataset distinct from a real zero-result nearby search", async () => {
+    vi.mocked(gtfsRepository.validateDataset).mockResolvedValue({ valid: true, status: "valid" } as never);
+    vi.mocked(gtfsRepository.nearbyStops).mockResolvedValue([] as never);
+
+    await expect(queryNearbyTransit({ latitude: -23.5, longitude: -46.6 }, "stops"))
+      .resolves.toMatchObject({ stops: [], lines: [] });
+  });
+
   it("reports an absent or invalid snapshot distinctly", async () => {
-    vi.mocked(gtfsRepository.validateDataset).mockResolvedValue({ valid: false } as never);
+    vi.mocked(gtfsRepository.validateDataset).mockResolvedValue({ valid: false, status: "missing" } as never);
     await expect(queryNearbyTransit({ latitude: -23.5, longitude: -46.6 }, "lines"))
       .rejects.toMatchObject({ code: "GTFS_NOT_INSTALLED" } satisfies Partial<NearbyDataError>);
     expect(gtfsRepository.nearbyStops).not.toHaveBeenCalled();

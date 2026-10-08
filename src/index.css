@@ -64,7 +64,7 @@
 
 @layer base {
   * { @apply border-border; }
-  html, body, #root { @apply min-h-screen; }
+  html, body, #root { @apply min-h-screen; height: 100%; }
   body {
     @apply bg-background text-foreground antialiased;
     font-family: 'Inter', system-ui, -apple-system, sans-serif;
@@ -73,7 +73,7 @@
 
 @layer components {
   .app-shell {
-    @apply mx-auto w-full max-w-md min-h-screen bg-background flex flex-col relative overflow-hidden;
+    @apply mx-auto w-full max-w-md bg-background flex flex-col relative overflow-hidden;\n    height: 100vh;\n    height: 100dvh;\n    min-height: 0;
   }
   .screen-padding { @apply px-5 py-6; }
   .app-top-header {

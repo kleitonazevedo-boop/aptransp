@@ -15,7 +15,7 @@ import {
   computeRoutes, formatDistance, formatDuration,
   type RouteResult, type TravelMode,
 } from "@/services/routeService";
-import { loadGoogleMaps, hasGoogleKey } from "@/services/googleMapsService";
+import { getGoogleMapsDiagnostics, loadGoogleMaps, hasGoogleKey } from "@/services/googleMapsService";
 import { useAuth } from "@/hooks/useAuth";
 import { historyService, type RouteHistoryItem } from "@/services/historyService";
 import { favoritesService, type FavoriteRoute } from "@/services/favoritesService";
@@ -58,6 +58,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   const [nearbyError, setNearbyError] = useState<string | null>(null);
   const [gtfsMissing, setGtfsMissing] = useState(false);
   const [isOnline, setIsOnline] = useState(connectivityService.isOnline());
+  const [mapUnavailable, setMapUnavailable] = useState(false);
   const [gtfsSyncRunning, setGtfsSyncRunning] = useState(false);
   const [gtfsSyncMessage, setGtfsSyncMessage] = useState("");
   const [gtfsSyncError, setGtfsSyncError] = useState<string | null>(null);
@@ -84,7 +85,10 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      if (!isOnline || !hasGoogleKey() || mapInstance.current) return;
+      if (!isOnline) { setMapUnavailable(false); return; }
+      if (mapInstance.current) return;
+      if (!hasGoogleKey()) { setMapUnavailable(true); return; }
+      setMapUnavailable(false);
       try {
         const maps = await loadGoogleMaps();
         if (cancelled || !mapRef.current || mapInstance.current) return;
@@ -93,7 +97,11 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
           zoom: 12, disableDefaultUI: true, zoomControl: true, clickableIcons: false,
           gestureHandling: "cooperative",
         });
-      } catch (e) { console.warn("[RouteScreen] Google Maps indisponível."); }
+      } catch {
+        setMapUnavailable(true);
+        const diagnostic = getGoogleMapsDiagnostics();
+        console.warn(`[GoogleMaps] Route map unavailable; status=${diagnostic.status}; WebView=${diagnostic.webViewOrigin}`);
+      }
     })();
     return () => { cancelled = true; };
   }, [contentMode, isOnline]);
@@ -298,7 +306,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
       setGtfsUpdateAvailable(false);
       setGtfsSyncMessage(result.status === "offline" ? "Sem conexão; usando a base local existente." : result.status === "current" ? "Dados offline já atualizados." : "Dados offline instalados");
       const dataset = await gtfsRepository.validateDataset();
-      setGtfsMissing(!dataset.valid);
+      setGtfsMissing(dataset.status === "missing" || dataset.status === "invalid");
       if (dataset.valid && (contentMode === "nearby-lines" || contentMode === "nearby-stations")) {
         const location = nearbyLocationRef.current;
         if (location) {
@@ -351,7 +359,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
       void drawNearbyMarkers(result.stops, loc);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Não foi possível consultar os dados locais.";
-      if (e instanceof NearbyDataError && e.code === "GTFS_NOT_INSTALLED") {
+      if (e instanceof NearbyDataError && (e.code === "GTFS_NOT_INSTALLED" || e.code === "GTFS_INVALID")) {
         setGtfsMissing(true);
       }
       console.error("[GTFS-NEARBY] Nearby query failed: " + message);
@@ -382,7 +390,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
       void drawNearbyMarkers(result.stops, loc);
     } catch (e) {
       const message = e instanceof Error ? e.message : "Não foi possível consultar os dados locais.";
-      if (e instanceof NearbyDataError && e.code === "GTFS_NOT_INSTALLED") {
+      if (e instanceof NearbyDataError && (e.code === "GTFS_NOT_INSTALLED" || e.code === "GTFS_INVALID")) {
         setGtfsMissing(true);
       }
       setNearbyError(message);
@@ -435,7 +443,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
 
   // ---------- UI
   return (
-    <div className={`flex-1 min-h-0 flex flex-col ${embedded ? "bg-transparent" : "bg-white"}`}>
+    <div className={`flex-1 min-h-0 flex flex-col overflow-hidden ${embedded ? "bg-transparent" : "bg-white"}`}>
       {!embedded && (
         <>
           <header className="bg-brand-purple text-white px-4 pt-4 pb-3 flex items-center justify-between">
@@ -449,7 +457,7 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
         </>
       )}
 
-      <div className={`flex min-h-0 flex-col overflow-y-auto overscroll-contain touch-pan-y flex-1 pb-[calc(1rem+env(safe-area-inset-bottom))] ${embedded ? "" : "bg-amber-50"}`}>
+      <div className={`flex min-h-0 flex-col overflow-y-auto overscroll-contain touch-pan-y flex-1 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] ${embedded ? "" : "bg-amber-50"}`}>
         {/* Inputs */}
         <div className="p-3 space-y-3">
           <div className="bg-white rounded-2xl p-3 space-y-2 shadow-sm relative">
@@ -544,6 +552,11 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
             {!isOnline && (
               <div className="absolute inset-0 flex items-center justify-center px-5 text-center text-xs text-slate-600">
                 O mapa precisa de internet. Linhas e paradas próximas continuam disponíveis offline.
+              </div>
+            )}
+            {isOnline && mapUnavailable && (
+              <div role="status" className="absolute inset-0 flex items-center justify-center px-5 text-center text-xs text-slate-600">
+                Não foi possível carregar o mapa. Linhas e paradas próximas continuam disponíveis.
               </div>
             )}
           </div>

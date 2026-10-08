@@ -107,14 +107,63 @@ function haversineMeters(aLat: number, aLon: number, bLat: number, bLon: number)
 
 const CHUNK = 400;
 
-async function getGtfsReadDb(): Promise<LocalDb> {
+const REQUIRED_GTFS_TABLES = ["gtfs_stops", "gtfs_routes", "gtfs_trips", "gtfs_stop_times"] as const;
+type RequiredGtfsTable = (typeof REQUIRED_GTFS_TABLES)[number];
+
+export type GtfsDatasetStatus =
+  | "valid"
+  | "missing"
+  | "invalid"
+  | "snapshot-unavailable"
+  | "database-unavailable"
+  | "read-error";
+
+export interface GtfsDatasetValidation {
+  valid: boolean;
+  status: GtfsDatasetStatus;
+  source: "snapshot" | "legacy" | null;
+  version: string | null;
+  missingTables: string[];
+  counts: Partial<Record<RequiredGtfsTable, number>>;
+}
+
+interface GtfsReadContext {
+  db: LocalDb;
+  key: string;
+  source: "snapshot" | "legacy";
+  version: string | null;
+}
+
+class ActiveSnapshotUnavailable extends Error {
+  constructor(readonly version: string) {
+    super("O snapshot GTFS ativo não está disponível.");
+    this.name = "ActiveSnapshotUnavailable";
+  }
+}
+
+let datasetValidationCache: { key: string; result: GtfsDatasetValidation } | null = null;
+
+function invalidateDatasetValidation() {
+  datasetValidationCache = null;
+}
+
+async function getGtfsReadContext(): Promise<GtfsReadContext> {
   const main = await getDb();
   const meta = await main.one<GtfsSyncMetadata>("SELECT * FROM gtfs_sync_metadata WHERE id = 1;");
   if (meta?.status === "ready" && meta.version) {
-    try { return await getGtfsSnapshotDb(meta.version); }
-    catch (error) { console.warn("[gtfs] snapshot indisponível; usando GTFS legado do banco principal", error); }
+    try {
+      const db = await getGtfsSnapshotDb(meta.version);
+      return { db, key: `snapshot:${meta.version}`, source: "snapshot", version: meta.version };
+    } catch {
+      // A versão ativa não deve ser mascarada com dados legados possivelmente antigos.
+      throw new ActiveSnapshotUnavailable(meta.version);
+    }
   }
-  return main;
+  return { db: main, key: "legacy", source: "legacy", version: null };
+}
+
+async function getGtfsReadDb(): Promise<LocalDb> {
+  return (await getGtfsReadContext()).db;
 }
 
 
@@ -161,6 +210,7 @@ export const gtfsRepository = {
         WHERE id = 1;`,
       [meta.version, meta.publishedAt, meta.totalRecords, meta.sha256, meta.sizeBytes],
     );
+    invalidateDatasetValidation();
   },
 
   async listImports(): Promise<GtfsImportRow[]> {
@@ -187,6 +237,93 @@ export const gtfsRepository = {
     const db = await getGtfsReadDb();
     const row = await db.one<{ n: number }>("SELECT COUNT(*) AS n FROM gtfs_stops;");
     return Number(row?.n ?? 0) > 0;
+  },
+
+  /**
+   * Validação estrutural leve do snapshot GTFS ativo.
+   * O resultado é memorizado por versão; imports invalidam o cache.
+   */
+  async validateDataset(): Promise<GtfsDatasetValidation> {
+    let context: GtfsReadContext;
+    try {
+      context = await getGtfsReadContext();
+    } catch (error) {
+      if (error instanceof ActiveSnapshotUnavailable) {
+        return {
+          valid: false, status: "snapshot-unavailable", source: "snapshot",
+          version: error.version, missingTables: [], counts: {},
+        };
+      }
+      return {
+        valid: false, status: "database-unavailable", source: null,
+        version: null, missingTables: [], counts: {},
+      };
+    }
+
+    if (datasetValidationCache?.key === context.key) return datasetValidationCache.result;
+
+    const base = {
+      source: context.source,
+      version: context.version,
+    } as const;
+    try {
+      const rows = await context.db.all<{ name: string }>(
+        "SELECT name FROM sqlite_master WHERE type = 'table';",
+      );
+      const tables = new Set(rows.map((row) => row.name));
+      const missingTables = REQUIRED_GTFS_TABLES.filter((table) => !tables.has(table));
+
+      if (missingTables.length === REQUIRED_GTFS_TABLES.length) {
+        const result: GtfsDatasetValidation = {
+          ...base, valid: false, status: "missing", missingTables: [...missingTables], counts: {},
+        };
+        datasetValidationCache = { key: context.key, result };
+        return result;
+      }
+      if (missingTables.length) {
+        const result: GtfsDatasetValidation = {
+          ...base, valid: false, status: "invalid", missingTables: [...missingTables], counts: {},
+        };
+        datasetValidationCache = { key: context.key, result };
+        return result;
+      }
+
+      const counts: Partial<Record<RequiredGtfsTable, number>> = {};
+      for (const table of REQUIRED_GTFS_TABLES) {
+        const row = await context.db.one<{ n: number }>(`SELECT COUNT(*) AS n FROM ${table};`);
+        counts[table] = Number(row?.n ?? 0);
+      }
+      if (REQUIRED_GTFS_TABLES.some((table) => !counts[table])) {
+        const result: GtfsDatasetValidation = {
+          ...base, valid: false, status: "invalid", missingTables: [], counts,
+        };
+        datasetValidationCache = { key: context.key, result };
+        return result;
+      }
+
+      const linkedRoute = await context.db.one<{ found: number }>(
+        `SELECT 1 AS found
+           FROM gtfs_stop_times st
+           JOIN gtfs_trips t ON t.trip_id = st.trip_id
+           JOIN gtfs_routes r ON r.route_id = t.route_id
+           JOIN gtfs_stops s ON s.stop_id = st.stop_id
+          LIMIT 1;`,
+      );
+      const result: GtfsDatasetValidation = {
+        ...base,
+        valid: Boolean(linkedRoute),
+        status: linkedRoute ? "valid" : "invalid",
+        missingTables: [],
+        counts,
+      };
+      datasetValidationCache = { key: context.key, result };
+      return result;
+    } catch {
+      // Erros transitórios de leitura não são memorizados para permitir nova tentativa.
+      return {
+        ...base, valid: false, status: "read-error", missingTables: [], counts: {},
+      };
+    }
   },
 
   /**
@@ -226,6 +363,7 @@ export const gtfsRepository = {
       const idx = spec.columns.map((c) => header.indexOf(c));
       const total = lines.length - 1;
 
+      invalidateDatasetValidation();
       await db.run(`DELETE FROM ${spec.table};`);
       await db.run("UPDATE gtfs_imports SET rows_total = ? WHERE id = ?;", [total, importId]);
 
@@ -313,6 +451,7 @@ export const gtfsRepository = {
       }
 
       await db.commitTransaction();
+      invalidateDatasetValidation();
       return counts;
     } catch (error) {
       await db.rollbackTransaction();
@@ -338,8 +477,14 @@ export const gtfsRepository = {
   },
 
   /** Linhas que atendem as paradas próximas — offline via stop_times/trips/routes. */
-  async nearbyLines(lat: number, lon: number, radiusMeters = 1000, limit = 40): Promise<NearbyGtfsLine[]> {
-    const stops: NearbyStop[] = await this.nearbyStops(lat, lon, radiusMeters, 25);
+  async nearbyLines(
+    lat: number,
+    lon: number,
+    radiusMeters = 1000,
+    limit = 40,
+    nearbyStops?: NearbyStop[],
+  ): Promise<NearbyGtfsLine[]> {
+    const stops: NearbyStop[] = nearbyStops ?? await this.nearbyStops(lat, lon, radiusMeters, 25);
     if (!stops.length) return [];
     const db = await getGtfsReadDb();
     const ids = stops.map((s) => s.stop_id);

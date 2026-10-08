@@ -1,5 +1,5 @@
 import { Capacitor, CapacitorHttp } from "@capacitor/core";
-import { hasGoogleKey, loadGoogleMaps } from "./googleMapsService";
+import { getGoogleMapsDiagnostics, hasGoogleKey, loadGoogleMaps } from "./googleMapsService";
 import { connectivityService } from "./connectivityService";
 import { getDb } from "@/database/database";
 import { gtfsRepository } from "@/repositories/gtfsRepository";
@@ -53,8 +53,21 @@ async function checkGoogleMaps(): Promise<DiagnosticResult> {
     return { key: "maps", label: "Google Maps", status: "unknown", detail: "Offline" };
   }
   if (!hasGoogleKey()) return { key: "maps", label: "Google Maps", status: "fail", detail: "Sem VITE key" };
-  try { await loadGoogleMaps(); return { key: "maps", label: "Google Maps", status: "ok" }; }
-  catch (e) { return { key: "maps", label: "Google Maps", status: "fail", detail: String(e) }; }
+  try {
+    await loadGoogleMaps();
+    const diagnostic = getGoogleMapsDiagnostics();
+    return {
+      key: "maps", label: "Google Maps",
+      status: diagnostic.status === "auth-failure" ? "fail" : "unknown",
+      detail: `SDK: ${diagnostic.status} · WebView: ${diagnostic.webViewOrigin} · chave configurada: sim · valide API/restrições no Google Cloud`,
+    };
+  } catch {
+    const diagnostic = getGoogleMapsDiagnostics();
+    return {
+      key: "maps", label: "Google Maps", status: "fail",
+      detail: `SDK: ${diagnostic.status} · WebView: ${diagnostic.webViewOrigin} · chave configurada: ${diagnostic.keyConfigured ? "sim" : "não"}`,
+    };
+  }
 }
 
 async function checkGps(): Promise<DiagnosticResult> {
