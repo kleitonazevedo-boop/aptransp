@@ -1,7 +1,9 @@
+import { Capacitor, CapacitorHttp } from "@capacitor/core";
 import { hasGoogleKey, loadGoogleMaps } from "./googleMapsService";
 import { connectivityService } from "./connectivityService";
 import { getDb } from "@/database/database";
 import { gtfsRepository } from "@/repositories/gtfsRepository";
+import { getApiBaseUrl } from "@/config/api";
 
 export type DiagnosticStatus = "ok" | "fail" | "unknown";
 
@@ -74,11 +76,84 @@ async function checkAndroidPerms(): Promise<DiagnosticResult> {
   } catch (e) { return { key: "perms", label: "Permissões", status: "unknown", detail: String(e) }; }
 }
 
+export async function checkHomelab(): Promise<DiagnosticResult> {
+  try { return checkApiConnection("homelab", "API APTRANSP", getApiBaseUrl() + "/health", false); }
+  catch (error) { return { key: "homelab", label: "API APTRANSP", status: "fail", detail: error instanceof Error ? error.message : "URL da API inválida" }; }
+}
+
+export async function checkGtfsHealth(): Promise<DiagnosticResult> {
+  try { return checkApiConnection("gtfs-health", "API GTFS Health", getApiBaseUrl() + "/health/database", true); }
+  catch (error) { return { key: "gtfs-health", label: "API GTFS Health", status: "fail", detail: error instanceof Error ? error.message : "URL da API inválida" }; }
+}
+
+export async function checkGtfsPackage(): Promise<DiagnosticResult> {
+  try { return checkApiConnection("gtfs-package", "Metadata GTFS", getApiBaseUrl() + "/api/v1/gtfs/sync/latest", true); }
+  catch (error) { return { key: "gtfs-package", label: "Metadata GTFS", status: "fail", detail: error instanceof Error ? error.message : "URL da API inválida" }; }
+}
+
+function formatResponse(data: unknown): string {
+  if (typeof data === "string") {
+    if (!data.length) return "Resposta vazia";
+    try { return JSON.stringify(JSON.parse(data), null, 2); }
+    catch { return data; }
+  }
+  return data == null ? "Resposta vazia" : JSON.stringify(data, null, 2);
+}
+
+async function checkApiConnection(
+  key: string, label: string, configuredUrl: string, includeResponse: boolean,
+): Promise<DiagnosticResult> {
+  const base = { key, label };
+  let url: URL;
+  try {
+    url = new URL(configuredUrl);
+    if (!["http:", "https:"].includes(url.protocol)) throw new Error("Protocolo inválido");
+  } catch {
+    return { ...base, status: "fail", detail: "Endereço da API inválido" };
+  }
+
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    let status: number;
+    let data: unknown;
+    if (Capacitor.isNativePlatform()) {
+      const response = await CapacitorHttp.get({
+        url: url.href, connectTimeout: 8000, readTimeout: 8000,
+        ...(includeResponse ? { responseType: "text" as const } : {}),
+      });
+      status = response.status;
+      data = response.data;
+    } else {
+      const response = await fetch(url.href, { method: "GET", cache: "no-store", credentials: "omit", signal: controller.signal });
+      status = response.status;
+      if (includeResponse) data = await response.text();
+    }
+    // Homelab checks reachability; GTFS endpoints also validate HTTP success.
+    return {
+      ...base, status: !includeResponse || (status >= 200 && status < 300) ? "ok" : "fail",
+      detail: includeResponse
+        ? `HTTP ${status}\n${formatResponse(data)}`
+        : `Servidor acessível · HTTP ${status}`,
+    };
+  } catch {
+    return {
+      ...base, status: "fail",
+      detail: controller.signal.aborted
+        ? "Sem resposta em 8 segundos"
+        : "Não foi possível conectar: verifique rede, servidor e bloqueios de acesso (CORS/HTTP)",
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
 export const diagnosticsService = {
   async runAll(): Promise<DiagnosticResult[]> {
     return Promise.all([
       checkConnectivity(), checkLocalDb(), checkGtfs(),
-      checkGoogleMaps(), checkGps(), checkAndroidPerms(),
+      checkGoogleMaps(), checkGps(), checkAndroidPerms(), checkHomelab(),
+      checkGtfsHealth(), checkGtfsPackage(),
     ]);
   },
 };

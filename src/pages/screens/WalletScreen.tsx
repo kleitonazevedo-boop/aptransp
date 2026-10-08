@@ -19,7 +19,8 @@ import {
   ArrowLeftRight,
   ChevronRight,
 } from "lucide-react";
-const mapaImg = "/mapa-transporte.jpg";
+import mapaAsset from "@/assets/mapa-transporte.webp.asset.json";
+const mapaImg = mapaAsset.url;
 
 interface Props {
   onAbout: () => void;
@@ -119,9 +120,9 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
       return (
         <button
           onClick={(e) => { e.stopPropagation(); handleTap(); }}
-          className="w-full h-full flex flex-col items-center justify-center text-white px-6 pb-[240px]"
+          className="w-full h-full flex flex-col items-center justify-start text-primary-foreground px-6 pt-4 pb-6 overflow-y-auto [&>*]:shrink-0"
         >
-          <p className="text-6xl font-light tracking-tight">
+          <p className="text-5xl leading-none font-light tracking-normal tabular-nums">
             {balance !== null ? balance.toFixed(2) : "00.00"}
           </p>
           <p className="text-sm opacity-90 mt-1">Saldo</p>
@@ -256,7 +257,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
 
   return (
     <div className="flex-1 flex flex-col bg-brand-purple relative overflow-hidden">
-      <header className="bg-brand-purple text-white px-4 pt-4 pb-6 flex items-center justify-between z-30 relative">
+      <header className="app-top-header bg-brand-purple text-white pb-6 flex items-center justify-between z-30 relative">
         <SideMenu
           onBalance={() => { setBalance(null); setActive("balance"); }}
           onMap={() => setActive("map")}
@@ -330,7 +331,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.25, delay: 0.1 }}
-                    className={`absolute inset-0 top-[56px] ${meta.body}`}
+                    className={`absolute inset-x-0 top-[56px] ${isInitial && id === "balance" ? "bottom-[224px]" : "bottom-0"} ${meta.body}`}
                   >
                     {renderContent(id)}
                   </motion.div>

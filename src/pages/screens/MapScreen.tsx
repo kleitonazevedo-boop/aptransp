@@ -1,7 +1,8 @@
 import { TransformWrapper, TransformComponent } from "react-zoom-pan-pinch";
 import { Logo } from "@/components/Logo";
 import { ArrowLeft, AlertTriangle, Bus, Train } from "lucide-react";
-const mapaImg = "/mapa-transporte.jpg";
+import mapaAsset from "@/assets/mapa-transporte.webp.asset.json";
+const mapaImg = mapaAsset.url;
 
 interface Props {
   onBack: () => void;

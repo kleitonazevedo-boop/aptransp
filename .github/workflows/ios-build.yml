@@ -1,0 +1,671 @@
+name: Build and upload iOS to TestFlight
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-ios:
+    name: Build APTRANSP for iOS and upload to TestFlight
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      APTRANSP_API_URL: ${{ vars.APTRANSP_API_URL || 'http://192.168.15.124:3000' }}
+      APTRANSP_ENVIRONMENT: ${{ vars.APTRANSP_ENVIRONMENT || 'local' }}
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify Xcode iOS SDK for App Store Connect
+        run: |
+          set -euo pipefail
+          xcodebuild -version > "$RUNNER_TEMP/xcode-version.txt"
+          XCODE_VERSION="$(sed -n '1s/^Xcode //p' "$RUNNER_TEMP/xcode-version.txt")"
+          IOS_SDK_VERSION="$(xcrun --sdk iphoneos --show-sdk-version)"
+          IOS_SDK_MAJOR="${IOS_SDK_VERSION%%.*}"
+          echo "Xcode version: $XCODE_VERSION"
+          echo "iOS SDK version: $IOS_SDK_VERSION"
+          if [ "$IOS_SDK_MAJOR" -lt 26 ]; then
+            echo "::error::App Store Connect requires the iOS 26 SDK or later; this runner provides iOS SDK $IOS_SDK_VERSION."
+            exit 1
+          fi
+
+      - name: Define temporary build paths
+        run: |
+          echo "IOS_SIGNING_DIR=$RUNNER_TEMP/aptransp-ios-signing" >> "$GITHUB_ENV"
+          echo "IOS_KEYCHAIN_PATH=$RUNNER_TEMP/aptransp-ios-signing/build.keychain-db" >> "$GITHUB_ENV"
+          echo "IOS_PROFILE_PATH=$RUNNER_TEMP/aptransp-ios-signing/profile.mobileprovision" >> "$GITHUB_ENV"
+          echo "IOS_ARCHIVE_PATH=$RUNNER_TEMP/APTRANSP.xcarchive" >> "$GITHUB_ENV"
+          echo "IOS_EXPORT_PATH=$RUNNER_TEMP/APTRANSP-export" >> "$GITHUB_ENV"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build web application
+        env:
+          VITE_APTRANSP_API_URL: ${{ env.APTRANSP_API_URL }}
+          VITE_APTRANSP_ENV: ${{ env.APTRANSP_ENVIRONMENT }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const environment = process.env.VITE_APTRANSP_ENV;
+          const api = new URL(process.env.VITE_APTRANSP_API_URL);
+          const host = api.hostname.toLowerCase();
+          const octets = host.split(".").map(Number);
+          const isPrivate = host === "localhost" || host.endsWith(".localhost") ||
+            (octets.length === 4 && octets.every(Number.isInteger) &&
+              (octets[0] === 10 || octets[0] === 127 ||
+                (octets[0] === 192 && octets[1] === 168) ||
+                (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+                (octets[0] === 169 && octets[1] === 254)));
+          if (!["local", "production"].includes(environment)) {
+            throw new Error("APTRANSP_ENVIRONMENT must be local or production.");
+          }
+          if (environment === "production" && (api.protocol !== "https:" || isPrivate)) {
+            throw new Error("Production builds require a public HTTPS APTRANSP_API_URL.");
+          }
+          if (environment === "local" && api.protocol === "http:" && !isPrivate) {
+            throw new Error("Local HTTP is allowed only for a private/local API host.");
+          }
+          if (!["http:", "https:"].includes(api.protocol)) {
+            throw new Error("APTRANSP_API_URL must use HTTP or HTTPS.");
+          }
+          console.log(`APTRANSP build environment: ${environment}`);
+          NODE
+          npm run build
+          if ! grep -R -F -- "$VITE_APTRANSP_API_URL" dist/assets >/dev/null; then
+            echo "::error::APTRANSP_API_URL was not embedded in the Vite bundle."
+            exit 1
+          fi
+
+      - name: Create iOS project if missing
+        run: |
+          if [ ! -d ios ]; then
+            npx cap add ios
+          fi
+
+      - name: Sync Capacitor iOS project
+        run: npx cap sync ios
+
+      - name: Configure iOS ATS and local network access
+        run: |
+          set -euo pipefail
+          INFO_PLIST="$(find ios -type f -path '*/App/Info.plist' -not -path '*/Pods/*' -print -quit)"
+          if [ -z "$INFO_PLIST" ]; then
+            echo "::error::Generated iOS App Info.plist was not found."
+            exit 1
+          fi
+          python3 scripts/configure-ios-networking.py "$INFO_PLIST"
+
+      - name: Apply APTRANSP logo to iOS app icon
+        run: |
+          set -euo pipefail
+          ICON_SET="$(find ios -type d -name 'AppIcon.appiconset' -not -path '*/Pods/*' -print -quit)"
+          if [ -z "$ICON_SET" ]; then
+            echo "::error::The iOS app icon asset catalog was not found."
+            exit 1
+          fi
+          xcrun swift scripts/generate-ios-icon.swift src/assets/logo-aptransp.png "$ICON_SET"
+
+      - name: Discover Xcode workspace, project, and scheme
+        id: xcode
+        run: |
+          set -euo pipefail
+          WORKSPACE="$(find ios -maxdepth 6 -type d -name '*.xcworkspace' -not -path '*/Pods/*' -print -quit)"
+          if [ -n "$WORKSPACE" ]; then
+            CONTAINER_FLAG="-workspace"
+            CONTAINER_PATH="$WORKSPACE"
+          else
+            PROJECT="$(find ios -maxdepth 6 -type d -name '*.xcodeproj' -not -path '*/Pods/*' -print -quit)"
+            if [ -z "$PROJECT" ]; then
+              echo "No Xcode workspace or project was generated under ios/."
+              exit 1
+            fi
+            CONTAINER_FLAG="-project"
+            CONTAINER_PATH="$PROJECT"
+          fi
+
+          xcodebuild -list -json "$CONTAINER_FLAG" "$CONTAINER_PATH" \
+            > "$RUNNER_TEMP/xcode-list.json" 2> "$RUNNER_TEMP/xcode-list.log"
+
+          export XCODE_LIST_JSON="$RUNNER_TEMP/xcode-list.json"
+          export CONTAINER_FLAG CONTAINER_PATH
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["XCODE_LIST_JSON"], encoding="utf-8") as stream:
+              data = json.load(stream)
+          metadata = data.get("workspace") or data.get("project") or {}
+          schemes = metadata.get("schemes", [])
+          if "App" in schemes:
+              scheme = "App"
+          elif len(schemes) == 1:
+              scheme = schemes[0]
+          else:
+              raise SystemExit(f"Could not select a unique app scheme. Xcode schemes: {schemes}")
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"IOS_CONTAINER_FLAG={os.environ['CONTAINER_FLAG']}\n")
+              env_file.write(f"IOS_CONTAINER_PATH={os.environ['CONTAINER_PATH']}\n")
+              env_file.write(f"IOS_SCHEME={scheme}\n")
+          print(f"Using Xcode {os.environ['CONTAINER_FLAG']} and scheme: {scheme}")
+          PY
+      - name: Validate Bundle ID and Xcode target
+        run: |
+          set -euo pipefail
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const config = JSON.parse(fs.readFileSync("capacitor.config.json", "utf8"));
+          if (config.appId !== "br.com.aptransp.app") {
+            throw new Error(`Unexpected Capacitor appId: ${config.appId}`);
+          }
+          console.log(`Capacitor Bundle ID: ${config.appId}`);
+          NODE
+
+          xcodebuild -showBuildSettings -json \
+            "$IOS_CONTAINER_FLAG" "$IOS_CONTAINER_PATH" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            > "$RUNNER_TEMP/xcode-build-settings.json" 2> "$RUNNER_TEMP/xcode-settings.log"
+
+          export XCODE_SETTINGS_JSON="$RUNNER_TEMP/xcode-build-settings.json"
+          python3 - <<'PY'
+          import json
+          import os
+
+          expected = "br.com.aptransp.app"
+          with open(os.environ["XCODE_SETTINGS_JSON"], encoding="utf-8") as stream:
+              targets = json.load(stream)
+          apps = [
+              item for item in targets
+              if item.get("buildSettings", {}).get("PRODUCT_TYPE") == "com.apple.product-type.application"
+          ]
+          matches = [
+              item for item in apps
+              if item.get("buildSettings", {}).get("PRODUCT_BUNDLE_IDENTIFIER") == expected
+          ]
+          if len(matches) != 1:
+              details = [
+                  f"{item.get('target')}: {item.get('buildSettings', {}).get('PRODUCT_BUNDLE_IDENTIFIER')}"
+                  for item in apps
+              ]
+              raise SystemExit(
+                  f"Expected exactly one iOS app target with Bundle ID {expected}; found: {details}"
+              )
+          print(f"Xcode app target: {matches[0].get('target')}")
+          print(f"Xcode Bundle ID: {expected}")
+          PY
+
+      - name: Import Apple Distribution certificate and install profile
+        env:
+          IOS_CERTIFICATE_BASE64: ${{ secrets.IOS_CERTIFICATE_BASE64 }}
+          IOS_P12_PASSWORD: ${{ secrets.IOS_P12_PASSWORD }}
+          IOS_PROVISIONING_PROFILE_BASE64: ${{ secrets.IOS_PROVISIONING_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$IOS_SIGNING_DIR" "$HOME/Library/MobileDevice/Provisioning Profiles"
+          chmod 700 "$IOS_SIGNING_DIR"
+
+          export IOS_SIGNING_DIR IOS_CERTIFICATE_BASE64 IOS_PROVISIONING_PROFILE_BASE64
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          directory = Path(os.environ["IOS_SIGNING_DIR"])
+          for secret_name, filename in (
+              ("IOS_CERTIFICATE_BASE64", "distribution.p12"),
+              ("IOS_PROVISIONING_PROFILE_BASE64", "profile.mobileprovision"),
+          ):
+              value = "".join(os.environ[secret_name].split())
+              if not value:
+                  raise SystemExit(f"{secret_name} is empty")
+              data = base64.b64decode(value, validate=True)
+              path = directory / filename
+              path.write_bytes(data)
+              path.chmod(0o600)
+          PY
+
+          KEYCHAIN_PASSWORD="$(openssl rand -hex 24)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+          security set-keychain-settings -lut 21600 "$IOS_KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$IOS_KEYCHAIN_PATH"
+          security import "$IOS_SIGNING_DIR/distribution.p12" \
+            -P "$IOS_P12_PASSWORD" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "$IOS_KEYCHAIN_PATH"
+          security set-key-partition-list \
+            -S apple-tool:,apple: \
+            -s \
+            -k "$KEYCHAIN_PASSWORD" \
+            "$IOS_KEYCHAIN_PATH"
+          security list-keychains -d user \
+            -s "$IOS_KEYCHAIN_PATH" login.keychain-db
+
+          IDENTITIES="$(security find-identity -v -p codesigning "$IOS_KEYCHAIN_PATH")"
+          if ! printf '%s\n' "$IDENTITIES" | grep -Fq "Apple Distribution:"; then
+            echo "::error::No valid Apple Distribution signing identity was found in the temporary keychain."
+            exit 1
+          fi
+          IDENTITY="$(printf '%s\n' "$IDENTITIES" | awk -F '"' '/Apple Distribution:/ { print $2; exit }')"
+          if [ -z "$IDENTITY" ]; then
+            echo "::error::No valid Apple Distribution signing identity was found in the temporary keychain."
+            exit 1
+          fi
+          export IDENTITY IOS_PROFILE_PATH IOS_SIGNING_DIR
+
+          security cms -D -i "$IOS_PROFILE_PATH" > "$IOS_SIGNING_DIR/profile.plist"
+          export APTRANSP_BUNDLE_ID="br.com.aptransp.app"
+          python3 - <<'PY'
+          import os
+          import plistlib
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          profile_path = Path(os.environ["IOS_SIGNING_DIR"]) / "profile.plist"
+          with profile_path.open("rb") as stream:
+              profile = plistlib.load(stream)
+
+          bundle_id = os.environ["APTRANSP_BUNDLE_ID"]
+          entitlements = profile.get("Entitlements", {})
+          application_identifier = entitlements.get("application-identifier", "")
+          profile_uuid = profile.get("UUID", "")
+          profile_name = profile.get("Name", "")
+          team_id = entitlements.get("com.apple.developer.team-identifier")
+          if not team_id:
+              team_ids = profile.get("TeamIdentifier", [])
+              team_id = team_ids[0] if team_ids else ""
+
+          if not application_identifier.endswith("." + bundle_id):
+              raise SystemExit(
+                  "Provisioning profile does not authorize the required Bundle ID "
+                  f"(expected {bundle_id})."
+              )
+          if "*" in application_identifier or entitlements.get("get-task-allow", True):
+              raise SystemExit("Provisioning profile is not an App Store distribution profile.")
+          if profile.get("ProvisionedDevices") or profile.get("ProvisionsAllDevices"):
+              raise SystemExit("Provisioning profile is not an App Store distribution profile.")
+          expiration = profile.get("ExpirationDate")
+          if expiration and expiration <= datetime.now(timezone.utc).replace(tzinfo=None):
+              raise SystemExit("Provisioning profile has expired.")
+          if not profile_uuid or not profile_name or not team_id:
+              raise SystemExit("Provisioning profile metadata is incomplete.")
+          if any("\n" in value or "\r" in value for value in (profile_uuid, profile_name, team_id)):
+              raise SystemExit("Provisioning profile metadata contains invalid line breaks.")
+
+          installed_path = Path.home() / "Library/MobileDevice/Provisioning Profiles" / f"{profile_uuid}.mobileprovision"
+          installed_path.write_bytes(Path(os.environ["IOS_PROFILE_PATH"]).read_bytes())
+          installed_path.chmod(0o600)
+
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"IOS_PROFILE_UUID={profile_uuid}\n")
+              env_file.write(f"IOS_PROFILE_NAME={profile_name}\n")
+              env_file.write(f"IOS_TEAM_ID={team_id}\n")
+              env_file.write(f"IOS_SIGNING_IDENTITY={os.environ['IDENTITY']}\n")
+          PY
+      - name: Configure manual signing for APTRANSP app target
+        run: |
+          set -euo pipefail
+          PROJECT_FILE="$(find ios -maxdepth 8 -type f -name project.pbxproj -not -path '*/Pods/*' -print -quit)"
+          if [ -z "$PROJECT_FILE" ]; then
+            echo "No non-Pods Xcode project file was found under ios/."
+            exit 1
+          fi
+
+          export PROJECT_FILE IOS_PROFILE_NAME IOS_TEAM_ID
+          export APTRANSP_BUNDLE_ID="br.com.aptransp.app"
+          export APTRANSP_BUILD_NUMBER="$GITHUB_RUN_NUMBER"
+          python3 - <<'PY'
+          import os
+          import re
+          from pathlib import Path
+
+          path = Path(os.environ["PROJECT_FILE"])
+          text = path.read_text(encoding="utf-8")
+          expected_bundle_id = os.environ["APTRANSP_BUNDLE_ID"]
+          config_pattern = re.compile(
+              r"(^[ \t]*[A-Fa-f0-9]{24} /\* (?:Debug|Release) \*/ = \{\n"
+              r"[ \t]*isa = XCBuildConfiguration;\n"
+              r"[ \t]*buildSettings = \{\n)(.*?)(\n[ \t]*\};\n"
+              r"[ \t]*name = (?:Debug|Release);\n[ \t]*\};)",
+              re.M | re.S,
+          )
+
+          def set_setting(body, key, value):
+              pattern = re.compile(rf"^([ \t]*){re.escape(key)} = .*?;$", re.M)
+              replacement = rf"\1{key} = {value};"
+              if pattern.search(body):
+                  return pattern.sub(replacement, body)
+              return f"\t\t\t\t{key} = {value};\n" + body
+
+          def quote(value):
+              return '"' + value.replace("\\", "\\\\").replace('"', '\\"') + '"'
+
+          settings = {
+              "CODE_SIGN_STYLE": "Manual",
+              "CODE_SIGN_IDENTITY": '"Apple Distribution"',
+              "DEVELOPMENT_TEAM": os.environ["IOS_TEAM_ID"],
+              "PROVISIONING_PROFILE_SPECIFIER": quote(os.environ["IOS_PROFILE_NAME"]),
+              "PRODUCT_BUNDLE_IDENTIFIER": expected_bundle_id,
+              "MARKETING_VERSION": "1.0.0",
+              "CURRENT_PROJECT_VERSION": os.environ["APTRANSP_BUILD_NUMBER"],
+          }
+
+          updated = 0
+          def patch(match):
+              global updated
+              body = match.group(2)
+              has_bundle_id = re.search(
+                  r"^\s*PRODUCT_BUNDLE_IDENTIFIER = \"?"
+                  + re.escape(expected_bundle_id)
+                  + r"\"?;$",
+                  body,
+                  re.M,
+              )
+              if not has_bundle_id and "INFOPLIST_FILE = App/Info.plist;" not in body:
+                  return match.group(0)
+              for key, value in settings.items():
+                  body = set_setting(body, key, value)
+              updated += 1
+              return match.group(1) + body + match.group(3)
+
+          result = config_pattern.sub(patch, text)
+          if updated == 0:
+              raise SystemExit("Could not find the APTRANSP app target build configurations to sign.")
+          path.write_text(result, encoding="utf-8")
+          print(f"Manual App Store signing configured for the APTRANSP app target ({updated} configurations).")
+          PY
+
+          xcodebuild -showBuildSettings -json \
+            "$IOS_CONTAINER_FLAG" "$IOS_CONTAINER_PATH" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            > "$RUNNER_TEMP/xcode-signed-build-settings.json" 2> "$RUNNER_TEMP/xcode-signed-settings.log"
+
+          export XCODE_SIGNED_SETTINGS_JSON="$RUNNER_TEMP/xcode-signed-build-settings.json"
+          python3 - <<'PY'
+          import json
+          import os
+
+          with open(os.environ["XCODE_SIGNED_SETTINGS_JSON"], encoding="utf-8") as stream:
+              targets = json.load(stream)
+          expected = {
+              "PRODUCT_BUNDLE_IDENTIFIER": "br.com.aptransp.app",
+              "CODE_SIGN_STYLE": "Manual",
+              "PROVISIONING_PROFILE_SPECIFIER": os.environ["IOS_PROFILE_NAME"],
+              "DEVELOPMENT_TEAM": os.environ["IOS_TEAM_ID"],
+              "MARKETING_VERSION": "1.0.0",
+              "CURRENT_PROJECT_VERSION": os.environ["GITHUB_RUN_NUMBER"],
+          }
+          apps = [
+              item for item in targets
+              if item.get("buildSettings", {}).get("PRODUCT_TYPE") == "com.apple.product-type.application"
+              and item.get("buildSettings", {}).get("PRODUCT_BUNDLE_IDENTIFIER") == expected["PRODUCT_BUNDLE_IDENTIFIER"]
+          ]
+          if len(apps) != 1:
+              raise SystemExit(f"Expected one APTRANSP app target after signing configuration; found {len(apps)}.")
+          settings = apps[0].get("buildSettings", {})
+          for key, value in expected.items():
+              actual = settings.get(key)
+              if actual != value:
+                  raise SystemExit(f"APTRANSP app target has unexpected {key}: {actual!r}.")
+          print("APTRANSP app target signing settings validated.")
+          PY
+
+      - name: Archive signed iOS app
+        run: |
+          set -euo pipefail
+          mkdir -p "$RUNNER_TEMP"
+          if ! xcodebuild archive \
+            "$IOS_CONTAINER_FLAG" "$IOS_CONTAINER_PATH" \
+            -scheme "$IOS_SCHEME" \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath "$IOS_ARCHIVE_PATH" \
+            > "$RUNNER_TEMP/ios-build.log" 2>&1; then
+            tail -n 200 "$RUNNER_TEMP/ios-build.log"
+            exit 1
+          fi
+
+          APP_PATH="$(find "$IOS_ARCHIVE_PATH/Products/Applications" -maxdepth 2 -type d -name '*.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "The signed archive does not contain an iOS application."
+            exit 1
+          fi
+          export APP_PATH
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          info_path = os.path.join(os.environ["APP_PATH"], "Info.plist")
+          with open(info_path, "rb") as stream:
+              info = plistlib.load(stream)
+          expected = {
+              "CFBundleIdentifier": "br.com.aptransp.app",
+              "CFBundleShortVersionString": "1.0.0",
+              "CFBundleVersion": os.environ["GITHUB_RUN_NUMBER"],
+          }
+          for key, value in expected.items():
+              actual = info.get(key)
+              if actual != value:
+                  raise SystemExit(f"Archive has unexpected {key}: {actual!r}; expected {value!r}")
+          print("Archive Bundle ID, marketing version, and build number validated.")
+          PY
+
+          codesign --verify --deep --strict "$APP_PATH"
+          security cms -D -i "$APP_PATH/embedded.mobileprovision" > "$RUNNER_TEMP/archive-profile.plist"
+          export ARCHIVE_PROFILE_PLIST="$RUNNER_TEMP/archive-profile.plist"
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          with open(os.environ["ARCHIVE_PROFILE_PLIST"], "rb") as stream:
+              profile = plistlib.load(stream)
+          if profile.get("UUID") != os.environ["IOS_PROFILE_UUID"]:
+              raise SystemExit("The archive was signed with a different provisioning profile.")
+          print("Archive provisioning profile UUID matches the installed App Store profile.")
+          PY
+          echo "Signed iOS archive created."
+
+      - name: Create App Store Connect export options
+        run: |
+          set -euo pipefail
+          export IOS_EXPORT_OPTIONS="$IOS_SIGNING_DIR/ExportOptions.plist"
+          python3 - <<'PY'
+          import os
+          import plistlib
+
+          options = {
+              "method": "app-store-connect",
+              "destination": "export",
+              "signingStyle": "manual",
+              "teamID": os.environ["IOS_TEAM_ID"],
+              "signingCertificate": "Apple Distribution",
+              "provisioningProfiles": {
+                  "br.com.aptransp.app": os.environ["IOS_PROFILE_NAME"]
+              },
+              "uploadSymbols": True,
+          }
+          with open(os.environ["IOS_EXPORT_OPTIONS"], "wb") as stream:
+              plistlib.dump(options, stream, sort_keys=False)
+          PY
+
+      - name: Export signed IPA
+        run: |
+          set -euo pipefail
+          mkdir -p "$IOS_EXPORT_PATH"
+          if ! xcodebuild -exportArchive \
+            -archivePath "$IOS_ARCHIVE_PATH" \
+            -exportPath "$IOS_EXPORT_PATH" \
+            -exportOptionsPlist "$IOS_SIGNING_DIR/ExportOptions.plist" \
+            > "$RUNNER_TEMP/ios-export.log" 2>&1; then
+            tail -n 200 "$RUNNER_TEMP/ios-export.log"
+            exit 1
+          fi
+
+          IPA_PATH="$(find "$IOS_EXPORT_PATH" -maxdepth 1 -type f -name '*.ipa' -print -quit)"
+          if [ -z "$IPA_PATH" ]; then
+            echo "xcodebuild -exportArchive completed without producing an IPA."
+            exit 1
+          fi
+          EXPECTED_IPA_PATH="$IOS_EXPORT_PATH/APTRANSP-1.0.0-${GITHUB_RUN_NUMBER}.ipa"
+          if [ "$IPA_PATH" != "$EXPECTED_IPA_PATH" ]; then
+            mv "$IPA_PATH" "$EXPECTED_IPA_PATH"
+          fi
+          IPA_PATH="$EXPECTED_IPA_PATH"
+          echo "IOS_IPA_PATH=$IPA_PATH" >> "$GITHUB_ENV"
+          echo "IPA exported: $(basename "$IPA_PATH")"
+
+      - name: Diagnose exported IPA
+        run: |
+          set -euo pipefail
+          INSPECT_DIR="$RUNNER_TEMP/ipa-inspect"
+          mkdir -p "$INSPECT_DIR"
+          ditto -x -k "$IOS_IPA_PATH" "$INSPECT_DIR"
+          APP_PATH="$(find "$INSPECT_DIR/Payload" -maxdepth 2 -type d -name '*.app' -print -quit)"
+          if [ -z "$APP_PATH" ]; then
+            echo "The exported IPA has no app in its Payload directory."
+            exit 1
+          fi
+
+          codesign --verify --deep --strict "$APP_PATH"
+          SIGNATURE_DETAILS="$RUNNER_TEMP/ipa-signature.txt"
+          codesign -dv --verbose=4 "$APP_PATH" 2> "$SIGNATURE_DETAILS"
+          SIGNATURE_IDENTITY="$(sed -n 's/^Authority=//p' "$SIGNATURE_DETAILS" | head -n 1)"
+          SIGNATURE_TEAM="$(sed -n 's/^TeamIdentifier=//p' "$SIGNATURE_DETAILS" | head -n 1)"
+          if [ "$SIGNATURE_IDENTITY" != "$IOS_SIGNING_IDENTITY" ]; then
+            echo "Exported IPA is not signed with the imported Apple Distribution identity."
+            exit 1
+          fi
+          if [ "$SIGNATURE_TEAM" != "$IOS_TEAM_ID" ]; then
+            echo "Exported IPA is signed for a different Apple Developer team."
+            exit 1
+          fi
+
+          export APP_PATH SIGNATURE_IDENTITY
+          python3 - <<'PY'
+          import os
+          import plistlib
+          from pathlib import Path
+
+          info_path = Path(os.environ["APP_PATH"]) / "Info.plist"
+          with info_path.open("rb") as stream:
+              info = plistlib.load(stream)
+          expected = ("br.com.aptransp.app", "1.0.0", os.environ["GITHUB_RUN_NUMBER"])
+          actual = (
+              info.get("CFBundleIdentifier"),
+              info.get("CFBundleShortVersionString"),
+              info.get("CFBundleVersion"),
+          )
+          if actual != expected:
+              raise SystemExit(f"Exported IPA metadata mismatch: {actual!r}; expected {expected!r}")
+
+          ipa = Path(os.environ["IOS_IPA_PATH"])
+          size = ipa.stat().st_size
+          print(f"Bundle ID: {actual[0]}")
+          print(f"Version: {actual[1]}")
+          print(f"Build number: {actual[2]}")
+          print(f"IPA: {ipa.name}")
+          print(f"IPA size: {size:,} bytes")
+          print(f"Signing identity: {os.environ['SIGNATURE_IDENTITY']}")
+          print(f"Provisioning profile: {os.environ['IOS_PROFILE_NAME']}")
+          PY
+      - name: Upload IPA to App Store Connect / TestFlight
+        id: testflight-upload
+        timeout-minutes: 30
+        env:
+          ASC_API_KEY_BASE64: ${{ secrets.ASC_API_KEY_BASE64 }}
+          ASC_ISSUER_ID: ${{ secrets.ASC_ISSUER_ID }}
+          ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
+        run: |
+          set -euo pipefail
+          PRIVATE_KEYS_DIR="$HOME/.appstoreconnect/private_keys"
+          mkdir -p "$PRIVATE_KEYS_DIR"
+          chmod 700 "$PRIVATE_KEYS_DIR"
+          KEY_PATH="$PRIVATE_KEYS_DIR/AuthKey_${ASC_KEY_ID}.p8"
+          export KEY_PATH ASC_API_KEY_BASE64
+          python3 - <<'PY'
+          import base64
+          import os
+          from pathlib import Path
+
+          value = "".join(os.environ["ASC_API_KEY_BASE64"].split())
+          if not value:
+              raise SystemExit("ASC_API_KEY_BASE64 is empty")
+          key_path = Path(os.environ["KEY_PATH"])
+          key_path.write_bytes(base64.b64decode(value, validate=True))
+          key_path.chmod(0o600)
+          PY
+          echo "ASC_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
+          if ! xcrun altool --upload-app \
+            --type ios \
+            --file "$IOS_IPA_PATH" \
+            --apiKey "$ASC_KEY_ID" \
+            --apiIssuer "$ASC_ISSUER_ID" \
+            --verbose \
+            > "$RUNNER_TEMP/testflight-upload.log" 2>&1; then
+            tail -n 200 "$RUNNER_TEMP/testflight-upload.log"
+            exit 1
+          fi
+          tail -n 40 "$RUNNER_TEMP/testflight-upload.log"
+          echo "App Store Connect accepted the IPA upload."
+
+      - name: Upload IPA, archive, and build logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: APTRANSP-iOS-${{ github.run_number }}
+          path: |
+            ${{ runner.temp }}/APTRANSP-export/*.ipa
+            ${{ runner.temp }}/APTRANSP.xcarchive
+            ${{ runner.temp }}/ios-*.log
+            ${{ runner.temp }}/xcode-list.log
+            ${{ runner.temp }}/xcode-settings.log
+            ${{ runner.temp }}/xcode-signed-settings.log
+            ${{ runner.temp }}/testflight-upload.log
+          if-no-files-found: warn
+          retention-days: 14
+
+      - name: Remove signing assets and temporary keychain
+        if: always()
+        run: |
+          set +e
+          IOS_SIGNING_DIR="${IOS_SIGNING_DIR:-$RUNNER_TEMP/aptransp-ios-signing}"
+          IOS_KEYCHAIN_PATH="${IOS_KEYCHAIN_PATH:-$IOS_SIGNING_DIR/build.keychain-db}"
+          IOS_PROFILE_PATH="${IOS_PROFILE_PATH:-$IOS_SIGNING_DIR/profile.mobileprovision}"
+          if [ -n "${ASC_KEY_PATH:-}" ]; then
+            rm -f "$ASC_KEY_PATH"
+          fi
+          security delete-keychain "$IOS_KEYCHAIN_PATH" >/dev/null 2>&1
+          security default-keychain -d user -s "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1
+          security list-keychains -d user -s "$HOME/Library/Keychains/login.keychain-db" >/dev/null 2>&1
+          if [ -n "${IOS_PROFILE_UUID:-}" ]; then
+            rm -f "$HOME/Library/MobileDevice/Provisioning Profiles/$IOS_PROFILE_UUID.mobileprovision"
+          fi
+          rm -f "$IOS_PROFILE_PATH" "$IOS_SIGNING_DIR/distribution.p12"
+          rm -rf "$IOS_SIGNING_DIR" "$RUNNER_TEMP/ipa-inspect"

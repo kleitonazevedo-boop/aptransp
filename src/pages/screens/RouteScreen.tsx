@@ -24,6 +24,7 @@ import { connectivityService } from "@/services/connectivityService";
 import {
   gtfsRepository, type NearbyStop, type NearbyGtfsLine,
 } from "@/repositories/gtfsRepository";
+import { gtfsService } from "@/services/gtfsService";
 
 interface Props { onBack?: () => void; initialMode?: ContentMode; embedded?: boolean }
 
@@ -53,6 +54,10 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   const [nearbyLines, setNearbyLines] = useState<NearbyGtfsLine[]>([]);
   const [nearbyStops, setNearbyStops] = useState<NearbyStop[]>([]);
   const [gtfsMissing, setGtfsMissing] = useState(false);
+  const [gtfsSyncRunning, setGtfsSyncRunning] = useState(false);
+  const [gtfsSyncMessage, setGtfsSyncMessage] = useState("");
+  const [gtfsSyncError, setGtfsSyncError] = useState<string | null>(null);
+  const [gtfsUpdateAvailable, setGtfsUpdateAvailable] = useState(false);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [info, setInfo] = useState<string | null>(null);
@@ -252,21 +257,86 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
   };
 
   // ---------- Nearby (OFFLINE: GTFS local)
+  const syncGtfsDatabase = async () => {
+    if (gtfsSyncRunning) return;
+    setGtfsSyncRunning(true);
+    setGtfsSyncError(null);
+    setGtfsSyncMessage("Consultando versão disponível…");
+    try {
+      const result = await gtfsService.syncPublishedPackage((stage, detail) => {
+        const messages: Record<string, string> = {
+          downloading: "Baixando dados de transporte…",
+          validating: "Validando base SQLite…",
+          installing: "Instalando dados offline…",
+          ready: "Dados offline instalados",
+        };
+        setGtfsSyncMessage((messages[stage] ?? "Sincronizando dados de transporte…") + (stage === "downloading" && detail?.endsWith("%") ? " " + detail : ""));
+      });
+      setGtfsUpdateAvailable(false);
+      setGtfsSyncMessage(result.status === "offline" ? "Sem conexão; usando a base local existente." : result.status === "current" ? "Dados offline já atualizados." : "Dados offline instalados");
+      const dataset = await gtfsRepository.validateDataset();
+      setGtfsMissing(!dataset.valid);
+      if (dataset.valid && (contentMode === "nearby-lines" || contentMode === "nearby-stations")) {
+        const loc = await getCurrentLocation();
+        const radius = contentMode === "nearby-lines" ? 1000 : 1500;
+        const stops = await gtfsRepository.nearbyStops(loc.latitude, loc.longitude, radius);
+        if (contentMode === "nearby-lines") {
+          setNearbyLines(await gtfsRepository.nearbyLines(loc.latitude, loc.longitude, 1000, 40, stops));
+        } else {
+          setNearbyStops(stops);
+        }
+        void drawNearbyMarkers(stops, loc);
+      }
+    } catch (error) {
+      setGtfsSyncError(error instanceof Error ? error.message : "Não foi possível instalar os dados offline.");
+      setGtfsSyncMessage("");
+    } finally {
+      setGtfsSyncRunning(false);
+    }
+  };
+
+  useEffect(() => {
+    if (contentMode !== "nearby-lines" && contentMode !== "nearby-stations") return;
+    let active = true;
+    void gtfsService.checkRemoteVersion()
+      .then(({ updateAvailable }) => { if (active) setGtfsUpdateAvailable(updateAvailable); })
+      .catch(() => { /* sem rede, a base local permanece disponível */ });
+    return () => { active = false; };
+  }, [contentMode]);
+
   const loadNearbyBuses = async () => {
     setError(null); setLoading(true); setContentMode("nearby-lines");
     try {
       const loc = await getCurrentLocation();
-      const hasGtfs = await gtfsRepository.hasData();
-      setGtfsMissing(!hasGtfs);
-      if (!hasGtfs) { setNearbyLines([]); return; }
-      const [lines, stops] = await Promise.all([
-        gtfsRepository.nearbyLines(loc.latitude, loc.longitude, 1000),
-        gtfsRepository.nearbyStops(loc.latitude, loc.longitude, 1000),
-      ]);
+      const latitude = loc.latitude;
+      const longitude = loc.longitude;
+      const radius = 1000;
+      console.info("[GTFS-NEARBY] latitude: " + latitude);
+      console.info("[GTFS-NEARBY] longitude: " + longitude);
+      console.info("[GTFS-NEARBY] radius: " + radius + " m");
+      if (typeof latitude !== "number" || typeof longitude !== "number" ||
+          !Number.isFinite(latitude) || !Number.isFinite(longitude) ||
+          latitude === 0 || longitude === 0 ||
+          latitude < -90 || latitude > 90 || longitude < -180 || longitude > 180) {
+        throw new Error("Localização inválida. Verifique se o GPS retornou latitude e longitude válidas.");
+      }
+
+      const dataset = await gtfsRepository.validateDataset();
+      setGtfsMissing(!dataset.valid);
+      if (!dataset.valid) {
+        console.warn("[GTFS-NEARBY] Base GTFS local não instalada ou sem dados.");
+        setNearbyLines([]);
+        return;
+      }
+
+      const stops = await gtfsRepository.nearbyStops(latitude, longitude, radius);
+      const lines = await gtfsRepository.nearbyLines(latitude, longitude, radius, 40, stops);
       setNearbyLines(lines);
       void drawNearbyMarkers(stops, loc);
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Falha ao buscar linhas próximas.");
+      const message = e instanceof Error ? e.message : "Falha ao buscar linhas próximas.";
+      console.error("[GTFS-NEARBY] Nearby query failed: " + message);
+      setError(message);
     } finally { setLoading(false); }
   };
 
@@ -549,10 +619,25 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
                 <button onClick={() => setContentMode("default")} className="text-blue-900/60"><X className="w-4 h-4" /></button>
               </div>
               {nearbyLines.length === 0 ? (
-                <p className="text-xs text-blue-900/60 py-3 text-center">
-                  {gtfsMissing ? "Base GTFS não importada. Vá em Administrador → Importação SPTrans (GTFS)."
-                               : "Nenhuma linha próxima na base offline."}
-                </p>
+                <div className="py-3 text-center">
+                  <p className="text-xs text-blue-900/60">
+                    {gtfsMissing ? "Base de transporte não instalada" : "Nenhuma linha próxima na base offline."}
+                  </p>
+                  {gtfsMissing && (
+                    <button onClick={() => void syncGtfsDatabase()} disabled={gtfsSyncRunning}
+                      className="mt-3 rounded-xl bg-brand-purple px-4 py-2 text-xs font-semibold text-white disabled:opacity-60">
+                      {gtfsSyncRunning ? <><Loader2 className="mr-2 inline h-3 w-3 animate-spin" />{gtfsSyncMessage || "Baixando dados de transporte…"}</> : "Baixar dados offline"}
+                    </button>
+                  )}
+                  {gtfsSyncRunning && <progress className="mt-3 block h-1.5 w-full" />}
+                  {gtfsSyncError && <p role="alert" className="mt-2 text-xs text-red-600">{gtfsSyncError}</p>}
+                  {!gtfsMissing && gtfsUpdateAvailable && (
+                    <button onClick={() => void syncGtfsDatabase()} disabled={gtfsSyncRunning}
+                      className="mt-3 rounded-xl border border-brand-purple px-4 py-2 text-xs font-semibold text-brand-purple disabled:opacity-60">
+                      Atualizar dados offline
+                    </button>
+                  )}
+                </div>
               ) : (
                 <ul className="divide-y divide-amber-100">
                   {nearbyLines.map((l) => (
@@ -567,8 +652,16 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
                   ))}
                 </ul>
               )}
+              {gtfsUpdateAvailable && (
+                <button onClick={() => void syncGtfsDatabase()} disabled={gtfsSyncRunning}
+                  className="mt-2 w-full rounded-xl border border-brand-purple px-3 py-2 text-xs font-semibold text-brand-purple disabled:opacity-60">
+                  {gtfsSyncRunning ? <><Loader2 className="mr-2 inline h-3 w-3 animate-spin" />{gtfsSyncMessage || "Baixando dados de transporte…"}</> : "Atualização de dados disponível"}
+                </button>
+              )}
+              {gtfsSyncRunning && <progress className="mt-2 block h-1.5 w-full" />}
+              {gtfsSyncError && <p role="alert" className="mt-2 text-xs text-red-600">{gtfsSyncError}</p>}
               <p className="text-[10px] text-blue-900/50 mt-2 text-center">
-                Dados offline do GTFS local (aptransp.db).
+                Dados GTFS offline no SQLite local.
               </p>
             </div>
           )}
@@ -583,10 +676,19 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
                 <button onClick={() => setContentMode("default")} className="text-blue-900/60"><X className="w-4 h-4" /></button>
               </div>
               {nearbyStops.length === 0 ? (
-                <p className="text-xs text-blue-900/60 py-3 text-center">
-                  {gtfsMissing ? "Base GTFS não importada. Vá em Administrador → Importação SPTrans (GTFS)."
-                               : "Nenhuma parada no raio de 1.5 km."}
-                </p>
+                <div className="py-3 text-center">
+                  <p className="text-xs text-blue-900/60">
+                    {gtfsMissing ? "Base de transporte não instalada" : "Nenhuma parada no raio de 1.5 km."}
+                  </p>
+                  {gtfsMissing && (
+                    <button onClick={() => void syncGtfsDatabase()} disabled={gtfsSyncRunning}
+                      className="mt-3 rounded-xl bg-brand-purple px-4 py-2 text-xs font-semibold text-white disabled:opacity-60">
+                      {gtfsSyncRunning ? <><Loader2 className="mr-2 inline h-3 w-3 animate-spin" />{gtfsSyncMessage || "Baixando dados de transporte…"}</> : "Baixar dados offline"}
+                    </button>
+                  )}
+                  {gtfsSyncRunning && <progress className="mt-3 block h-1.5 w-full" />}
+                  {gtfsSyncError && <p role="alert" className="mt-2 text-xs text-red-600">{gtfsSyncError}</p>}
+                </div>
               ) : (
                 <ul className="divide-y divide-amber-100">
                   {nearbyStops.map((s) => (
