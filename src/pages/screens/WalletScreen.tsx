@@ -170,7 +170,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
 
     if (id === "route") {
       return (
-        <div className="w-full h-full min-h-0 overflow-hidden" onClick={(e) => e.stopPropagation()}>
+        <div className="flex-1 min-h-0 w-full flex flex-col overflow-hidden" onClick={(e) => e.stopPropagation()}>
           <RouteScreen embedded />
         </div>
       );
@@ -258,7 +258,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
   const STACK_START = `calc(100% - ${(order.length - 1) * CARD_HEADER_HEIGHT}px)`;
 
   return (
-    <div className="flex-1 flex flex-col bg-brand-purple relative overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col bg-brand-purple relative overflow-hidden">
       <header className="app-top-header bg-brand-purple text-white pb-6 flex items-center justify-between z-30 relative">
         <SideMenu
           onBalance={() => { setBalance(null); setActive("balance"); }}
@@ -275,7 +275,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
         <AlertTriangle className="w-5 h-5 text-brand-yellow" />
       </header>
 
-      <div className="flex-1 relative px-0 pb-0 -mt-4">
+      <div className="flex-1 min-h-0 relative px-0 pb-0 -mt-4">
         {order.map((id, index) => {
           const isActive = id === active;
           const meta = cardMeta[id];
@@ -318,10 +318,10 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
               animate={{ top, height, scale: 1 }}
               transition={spring}
               style={{ zIndex }}
-              className={`absolute -left-px -right-px rounded-t-3xl overflow-hidden shadow-elevated cursor-pointer ${meta.body}`}
+              className={`absolute -left-px -right-px min-h-0 flex flex-col rounded-t-3xl overflow-hidden shadow-elevated cursor-pointer ${meta.body}`}
             >
 
-              <div className={`${meta.bar} font-bold flex items-center justify-center gap-2 py-4 text-base`}>
+              <div className={`${meta.bar} shrink-0 font-bold flex items-center justify-center gap-2 py-4 text-base`}>
                 {meta.icon}
                 <span>{meta.title}</span>
               </div>
@@ -333,7 +333,7 @@ const WalletScreen = ({ onAbout, onOpenMap, onOpenRoute, onOpenNearby, onOpenNfc
                     animate={{ opacity: 1 }}
                     exit={{ opacity: 0 }}
                     transition={{ duration: 0.25, delay: 0.1 }}
-                    className={`absolute inset-x-0 top-[56px] ${isInitial && id === "balance" ? "bottom-[224px]" : "bottom-0"} ${meta.body}`}
+                    className={`absolute inset-x-0 top-[56px] ${isInitial && id === "balance" ? "bottom-[224px]" : "bottom-0"} flex min-h-0 flex-col overflow-hidden ${meta.body}`}
                   >
                     {renderContent(id)}
                   </motion.div>

@@ -446,18 +446,18 @@ const RouteScreen = ({ onBack, initialMode = "default", embedded = false }: Prop
     <div className={`flex-1 min-h-0 flex flex-col overflow-hidden ${embedded ? "bg-transparent" : "bg-white"}`}>
       {!embedded && (
         <>
-          <header className="bg-brand-purple text-white px-4 pt-4 pb-3 flex items-center justify-between">
+          <header className="shrink-0 bg-brand-purple text-white px-4 pt-4 pb-3 flex items-center justify-between">
             <button onClick={onBack} aria-label="Voltar" className="p-1"><ArrowLeft className="w-6 h-6" /></button>
             <Logo className="w-8 h-8" />
             <RouteIcon className="w-5 h-5 text-brand-yellow" />
           </header>
-          <div className="bg-brand-yellow text-blue-900 text-center text-sm font-bold py-2 flex items-center justify-center gap-2">
+          <div className="shrink-0 bg-brand-yellow text-blue-900 text-center text-sm font-bold py-2 flex items-center justify-center gap-2">
             <RouteIcon className="w-4 h-4" /> Traçado de Rota
           </div>
         </>
       )}
 
-      <div className={`flex min-h-0 flex-col overflow-y-auto overscroll-contain touch-pan-y flex-1 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] ${embedded ? "" : "bg-amber-50"}`}>
+      <div className={`relative z-0 flex-1 min-h-0 flex flex-col overflow-x-hidden overflow-y-auto overscroll-y-contain touch-pan-y pb-[calc(2rem+env(safe-area-inset-bottom,0px))] ${embedded ? "" : "bg-amber-50"}`}>
         {/* Inputs */}
         <div className="p-3 space-y-3">
           <div className="bg-white rounded-2xl p-3 space-y-2 shadow-sm relative">
