@@ -18,6 +18,9 @@ jobs:
     name: Build APTRANSP for iOS and upload to TestFlight
     runs-on: macos-26
     timeout-minutes: 60
+    env:
+      APTRANSP_API_URL: ${{ vars.APTRANSP_API_URL || 'http://192.168.15.124:3000' }}
+      APTRANSP_ENVIRONMENT: ${{ vars.APTRANSP_ENVIRONMENT || 'local' }}
 
     steps:
       - name: Checkout repository
@@ -59,8 +62,40 @@ jobs:
 
       - name: Build web application
         env:
-          VITE_APTRANSP_API_URL: ${{ vars.APTRANSP_API_URL }}
-        run: npm run build
+          VITE_APTRANSP_API_URL: ${{ env.APTRANSP_API_URL }}
+          VITE_APTRANSP_ENV: ${{ env.APTRANSP_ENVIRONMENT }}
+        run: |
+          set -euo pipefail
+          node --input-type=module <<'NODE'
+          const environment = process.env.VITE_APTRANSP_ENV;
+          const api = new URL(process.env.VITE_APTRANSP_API_URL);
+          const host = api.hostname.toLowerCase();
+          const octets = host.split(".").map(Number);
+          const isPrivate = host === "localhost" || host.endsWith(".localhost") ||
+            (octets.length === 4 && octets.every(Number.isInteger) &&
+              (octets[0] === 10 || octets[0] === 127 ||
+                (octets[0] === 192 && octets[1] === 168) ||
+                (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) ||
+                (octets[0] === 169 && octets[1] === 254)));
+          if (!["local", "production"].includes(environment)) {
+            throw new Error("APTRANSP_ENVIRONMENT must be local or production.");
+          }
+          if (environment === "production" && (api.protocol !== "https:" || isPrivate)) {
+            throw new Error("Production builds require a public HTTPS APTRANSP_API_URL.");
+          }
+          if (environment === "local" && api.protocol === "http:" && !isPrivate) {
+            throw new Error("Local HTTP is allowed only for a private/local API host.");
+          }
+          if (!["http:", "https:"].includes(api.protocol)) {
+            throw new Error("APTRANSP_API_URL must use HTTP or HTTPS.");
+          }
+          console.log(`APTRANSP build environment: ${environment}`);
+          NODE
+          npm run build
+          if ! grep -R -F -- "$VITE_APTRANSP_API_URL" dist/assets >/dev/null; then
+            echo "::error::APTRANSP_API_URL was not embedded in the Vite bundle."
+            exit 1
+          fi
 
       - name: Create iOS project if missing
         run: |
@@ -70,6 +105,16 @@ jobs:
 
       - name: Sync Capacitor iOS project
         run: npx cap sync ios
+
+      - name: Configure iOS ATS and local network access
+        run: |
+          set -euo pipefail
+          INFO_PLIST="$(find ios -type f -path '*/App/Info.plist' -not -path '*/Pods/*' -print -quit)"
+          if [ -z "$INFO_PLIST" ]; then
+            echo "::error::Generated iOS App Info.plist was not found."
+            exit 1
+          fi
+          python3 scripts/configure-ios-networking.py "$INFO_PLIST"
 
       - name: Apply APTRANSP logo to iOS app icon
         run: |

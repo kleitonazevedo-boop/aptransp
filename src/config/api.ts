@@ -2,6 +2,13 @@ function configuredBase(): string | undefined {
   return (import.meta.env.VITE_APTRANSP_API_URL as string | undefined)?.trim().replace(/\/$/, "");
 }
 
+function configuredEnvironment(): "local" | "production" {
+  const value = (import.meta.env.VITE_APTRANSP_ENV as string | undefined)?.trim().toLowerCase();
+  if (value === "local" || value === "production") return value;
+  if (!value) return import.meta.env.DEV ? "local" : "production";
+  throw new Error("VITE_APTRANSP_ENV deve ser 'local' ou 'production'.");
+}
+
 function isPrivateOrLocalHost(host: string): boolean {
   const value = host.toLowerCase().replace(/^\[|\]$/g, "");
   if (value === "localhost" || value.endsWith(".localhost") || value === "::1" || value === "0.0.0.0") return true;
@@ -13,21 +20,26 @@ function isPrivateOrLocalHost(host: string): boolean {
     (parts[0] === 169 && parts[1] === 254);
 }
 
-/** Configuração central da API. Builds publicados aceitam somente HTTPS público. */
+/** Configuração central da API. HTTP privado só é permitido no ambiente local. */
 export function getApiBaseUrl(): string {
   const base = configuredBase();
   if (!base) throw new Error("API APTRANSP não configurada (VITE_APTRANSP_API_URL).");
   let parsed: URL;
   try { parsed = new URL(base); }
   catch { throw new Error("VITE_APTRANSP_API_URL deve ser uma URL HTTP(S) válida."); }
+
+  const environment = configuredEnvironment();
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("VITE_APTRANSP_API_URL deve ser uma URL HTTP(S) válida.");
   }
-  if (parsed.protocol === "http:" && !import.meta.env.DEV) {
+  if (environment === "production" && parsed.protocol !== "https:") {
     throw new Error("A API de produção precisa utilizar HTTPS.");
   }
-  if (import.meta.env.PROD && isPrivateOrLocalHost(parsed.hostname)) {
+  if (environment === "production" && isPrivateOrLocalHost(parsed.hostname)) {
     throw new Error("A URL de produção da API não pode apontar para uma rede privada ou endereço local.");
+  }
+  if (environment === "local" && parsed.protocol === "http:" && !isPrivateOrLocalHost(parsed.hostname)) {
+    throw new Error("HTTP no ambiente local só pode apontar para um endereço privado ou local.");
   }
   return parsed.toString().replace(/\/$/, "");
 }
