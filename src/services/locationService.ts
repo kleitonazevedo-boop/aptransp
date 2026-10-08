@@ -30,6 +30,22 @@ export interface LocationPermission {
 
 const SETTINGS_MESSAGE =
   "A localização está bloqueada. Ative-a nas configurações do aplicativo para usar este recurso.";
+const NATIVE_PERMISSION_DECLINED_KEY = "aptransp.location.permission-declined.v1";
+
+function permissionWasDeclined(): boolean {
+  try { return localStorage.getItem(NATIVE_PERMISSION_DECLINED_KEY) === "true"; }
+  catch { return false; }
+}
+
+function rememberPermissionDeclined(): void {
+  try { localStorage.setItem(NATIVE_PERMISSION_DECLINED_KEY, "true"); }
+  catch { /* a checagem nativa de permissão ainda impede prompts repetidos */ }
+}
+
+function clearPermissionDeclined(): void {
+  try { localStorage.removeItem(NATIVE_PERMISSION_DECLINED_KEY); }
+  catch { /* sem estado persistido; o status do sistema continua sendo consultado */ }
+}
 
 function permissionState(status: { location?: string; coarseLocation?: string }): string {
   return status.location ?? status.coarseLocation ?? "unknown";
@@ -39,7 +55,12 @@ function permissionState(status: { location?: string; coarseLocation?: string })
 export async function checkLocationPermission(): Promise<LocationPermission> {
   if (Capacitor.isNativePlatform()) {
     const state = permissionState(await Geolocation.checkPermissions());
-    return { state, granted: state === "granted", blocked: state === "denied" || state === "prompt-with-rationale" };
+    if (state === "granted") clearPermissionDeclined();
+    return {
+      state: permissionWasDeclined() && state !== "granted" ? "blocked" : state,
+      granted: state === "granted",
+      blocked: state === "denied" || state === "prompt-with-rationale" || permissionWasDeclined(),
+    };
   }
 
   if (typeof navigator === "undefined" || !navigator.permissions?.query) {
@@ -61,10 +82,17 @@ async function ensureNativePermission(): Promise<void> {
     throw normalizeLocationError(error, "check");
   }
 
-  if (state === "granted") return;
+  if (state === "granted") {
+    clearPermissionDeclined();
+    return;
+  }
+  if (permissionWasDeclined()) {
+    throw new LocationServiceError("PERMISSION_BLOCKED", SETTINGS_MESSAGE);
+  }
   // prompt-with-rationale means Android has already shown and the user declined;
   // honor that choice and direct them to Settings instead of showing repeated dialogs.
   if (state === "denied" || state === "prompt-with-rationale") {
+    rememberPermissionDeclined();
     throw new LocationServiceError("PERMISSION_BLOCKED", SETTINGS_MESSAGE);
   }
   if (state !== "prompt") {
@@ -73,10 +101,14 @@ async function ensureNativePermission(): Promise<void> {
 
   try {
     const requested = await Geolocation.requestPermissions({ permissions: ["location"] });
-    if (permissionState(requested) === "granted") return;
+    if (permissionState(requested) === "granted") {
+      clearPermissionDeclined();
+      return;
+    }
+    rememberPermissionDeclined();
     throw new LocationServiceError(
       "PERMISSION_DENIED",
-      "Permissão de localização negada. Autorize o acesso durante o uso para encontrar linhas, paradas e definir a origem da rota.",
+      "Permissão de localização negada. Ative o acesso durante o uso nas configurações do aplicativo.",
     );
   } catch (error) {
     if (error instanceof LocationServiceError) throw error;

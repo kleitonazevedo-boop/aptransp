@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { Capacitor } from "@capacitor/core";
 import { Geolocation } from "@capacitor/geolocation";
-import { checkLocationPermission, getCurrentLocation, LocationServiceError } from "@/services/locationService";
+import { checkLocationPermission, getCurrentLocation } from "@/services/locationService";
 
 vi.mock("@capacitor/core", () => ({
   Capacitor: { isNativePlatform: vi.fn(), getPlatform: vi.fn() },
@@ -20,10 +20,19 @@ const browserPosition = {
   coords: { latitude: -23.55, longitude: -46.63, accuracy: 12 },
   timestamp: 1,
 } as GeolocationPosition;
+const nativePosition = {
+  coords: {
+    latitude: -23.55, longitude: -46.63, accuracy: 12,
+    altitudeAccuracy: null, altitude: null, speed: null, heading: null,
+    magneticHeading: null, trueHeading: null, headingAccuracy: null, course: null,
+  },
+  timestamp: 1,
+};
 
 describe("locationService", () => {
   beforeEach(() => {
     vi.resetAllMocks();
+    globalThis.localStorage?.clear();
     vi.mocked(Capacitor.isNativePlatform).mockReturnValue(false);
     vi.mocked(Capacitor.getPlatform).mockReturnValue("web");
     Object.defineProperty(globalThis.navigator, "geolocation", {
@@ -41,7 +50,7 @@ describe("locationService", () => {
       vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
       vi.mocked(Capacitor.getPlatform).mockReturnValue(platform);
       vi.mocked(Geolocation.checkPermissions).mockResolvedValue({ location: "granted", coarseLocation: "granted" });
-      vi.mocked(Geolocation.getCurrentPosition).mockResolvedValue(browserPosition);
+      vi.mocked(Geolocation.getCurrentPosition).mockResolvedValue(nativePosition);
       await expect(getCurrentLocation(5000)).resolves.toEqual({
         latitude: -23.55, longitude: -46.63, accuracy: 12,
       });
@@ -55,7 +64,7 @@ describe("locationService", () => {
     vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
     vi.mocked(Geolocation.checkPermissions).mockResolvedValue({ location: "prompt", coarseLocation: "prompt" });
     vi.mocked(Geolocation.requestPermissions).mockResolvedValue({ location: "granted", coarseLocation: "granted" });
-    vi.mocked(Geolocation.getCurrentPosition).mockResolvedValue(browserPosition);
+    vi.mocked(Geolocation.getCurrentPosition).mockResolvedValue(nativePosition);
     await expect(getCurrentLocation()).resolves.toMatchObject({ latitude: -23.55 });
     expect(Geolocation.requestPermissions).toHaveBeenCalledWith({ permissions: ["location"] });
   });
@@ -77,6 +86,16 @@ describe("locationService", () => {
       code: "PERMISSION_BLOCKED",
       message: expect.stringContaining("configurações"),
     });
+    expect(Geolocation.requestPermissions).not.toHaveBeenCalled();
+  });
+
+  it("remembers a refusal if the platform continues reporting a prompt state", async () => {
+    vi.mocked(Capacitor.isNativePlatform).mockReturnValue(true);
+    vi.mocked(Geolocation.checkPermissions).mockResolvedValue({ location: "prompt", coarseLocation: "prompt" });
+    vi.mocked(Geolocation.requestPermissions).mockResolvedValue({ location: "denied", coarseLocation: "denied" });
+    await expect(getCurrentLocation()).rejects.toMatchObject({ code: "PERMISSION_DENIED" });
+    vi.mocked(Geolocation.requestPermissions).mockClear();
+    await expect(getCurrentLocation()).rejects.toMatchObject({ code: "PERMISSION_BLOCKED" });
     expect(Geolocation.requestPermissions).not.toHaveBeenCalled();
   });
 
