@@ -20,15 +20,16 @@ function isPrivateOrLocalHost(host: string): boolean {
     (parts[0] === 169 && parts[1] === 254);
 }
 
-/** Configuração central da API. HTTP privado só é permitido no ambiente local. */
-export function getApiBaseUrl(): string {
-  const base = configuredBase();
+/** Valida a base da API de acordo com o ambiente, sem acessar a rede. */
+export function resolveApiBaseUrl(base: string | undefined, environment: string): string {
   if (!base) throw new Error("API APTRANSP não configurada (VITE_APTRANSP_API_URL).");
   let parsed: URL;
-  try { parsed = new URL(base); }
+  try { parsed = new URL(base.trim()); }
   catch { throw new Error("VITE_APTRANSP_API_URL deve ser uma URL HTTP(S) válida."); }
 
-  const environment = configuredEnvironment();
+  if (environment !== "local" && environment !== "production") {
+    throw new Error("VITE_APTRANSP_ENV deve ser 'local' ou 'production'.");
+  }
   if (parsed.protocol !== "https:" && parsed.protocol !== "http:") {
     throw new Error("VITE_APTRANSP_API_URL deve ser uma URL HTTP(S) válida.");
   }
@@ -42,4 +43,9 @@ export function getApiBaseUrl(): string {
     throw new Error("HTTP no ambiente local só pode apontar para um endereço privado ou local.");
   }
   return parsed.toString().replace(/\/$/, "");
+}
+
+/** Configuração central da API; os mesmos valores são incorporados ao bundle Capacitor. */
+export function getApiBaseUrl(): string {
+  return resolveApiBaseUrl(configuredBase(), configuredEnvironment());
 }
